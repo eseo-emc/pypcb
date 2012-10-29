@@ -1,5 +1,5 @@
 import unittest
-from utility import *
+from pypcb import *
 
 class RotatableList_test(unittest.TestCase):
     def setUp(self):

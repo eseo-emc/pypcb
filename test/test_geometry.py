@@ -2,14 +2,14 @@ import unittest
 import nose
 import numpy
 
-from geometry import *
+from pypcb import *
 
 class Location_test(unittest.TestCase):
     def test_subtraction(self):
         a = Location(1.,2.)
         b = Location(3.,-1.5)
-        self.assertEqual(type(a-b),Vector)
-        (a-b).assertAlmostEqual(Vector(-2.,3.5))
+        self.assertEqual(type(a-b),PlaneVector)
+        (a-b).assertAlmostEqual(PlaneVector(-2.,3.5))
 
 class UnitVector_test(unittest.TestCase):
     def setUp(self):

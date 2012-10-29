@@ -1,7 +1,6 @@
 import unittest
 
-from excellon import *
-from geometry import Location
+from pypcb import *
 
 class Test_Excellon(unittest.TestCase):
     def setUp(self):

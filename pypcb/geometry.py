@@ -1,10 +1,19 @@
 import numpy
 import copy
 
+from lazy import *
+
 collisionDetection = False # set to False to speed up (useful for debugging)
 
 def mil(length):
     return length*0.0254
+
+
+    
+def assertScalarAlmostEqual(first,second,margin=1e-6):
+    assert numpy.linalg.norm(first-second) < margin, '{first} is not almost {second}'.format(first=first,second=second)
+
+
 
 class Hole(object):
     margin = 0.1
@@ -46,37 +55,135 @@ class HoleFile(object):
                 platedFile.addHole(hole.location,hole.diameter)
             else:
                 nonPlatedFile.addHole(hole.location,hole.diameter)
-        
 
-class VectorLike(numpy.ndarray):
-    def __new__(cls,dx,dy=None):
-        if isinstance(dx,numpy.ndarray):
-            dy=dx[1]
-            dx=dx[0]
-        return numpy.ndarray.__new__(cls,(2,),buffer=numpy.array([dx,dy]),dtype=numpy.float) 
+## Collections
+class ApproximateList(list):
+    def assertAlmostEqual(self,other):
+        assert len(self) == len(other), 'Both lists do not have the same lenght'
+        for number,item in enumerate(self):
+            item.assertAlmostEqual(other[number])
+
+class RotatableList(ApproximateList):
+    def __rshift__(self,steps):
+        if steps > 1:
+            return (self >> (steps-1)) >> 1
+        elif steps == 1:
+            return RotatableList([self[-1]] + self[:-1])
+        elif steps == 0:
+            return self
+        else:
+            raise ValueError
+    def __lshift__(self,steps):
+        if steps > 1:
+            return (self << (steps-1)) << 1
+        elif steps == 1:
+            return RotatableList(self[1:] + [self[0]])
+        elif steps == 0:
+            return self
+        else:
+            raise ValueError
+            
+
+## Primitives
+class Vector(numpy.ndarray):
+    def __new__(cls,value):
+        newArray = numpy.array(value).astype(numpy.float)
+        return numpy.ndarray.__new__(cls,newArray.shape,buffer=newArray) 
+    def length(self):
+        return numpy.linalg.norm(self)
     def assertAlmostEqual(self,other,margin=1e-6):
         assert self.approximately(other,margin), '{self} is not almost {other}'.format(self=self,other=other)
     def approximately(self,other,margin=1e-6):
         return numpy.linalg.norm(self-other) < margin
 
-class Location(VectorLike):
+class PlaneVector(Vector):
+    def __new__(cls,dx,dy=None):
+        if isinstance(dx,numpy.ndarray):
+            dy=dx[1]
+            dx=dx[0]
+        return Vector.__new__(cls,[float(dx),float(dy)]) 
+
+
+class Location(PlaneVector):
     def __sub__(self,other):
         difference = numpy.ndarray.__sub__(self,other)
-        return Vector(difference[0],difference[1])
+        return PlaneVector(difference[0],difference[1])
     def __add__(self,other):
         sum = numpy.ndarray.__add__(self,other)
         return Location(sum[0],sum[1])
 
-class Vector(VectorLike):
-    def length(self):
-        return numpy.linalg.norm(self)
 
-class UnitVector(Vector):
+class UnitVector(PlaneVector):
     def __new__(cls,x,y=None):
-        newVector = Vector.__new__(cls,x,y)
+        newVector = PlaneVector.__new__(cls,x,y)
         newVector /= newVector.length()
         return newVector
+N  = UnitVector(0,1)
+NW = UnitVector(-1,1)
+W  = UnitVector(-1,0)
+SW = UnitVector(-1,-1)
+S  = UnitVector(0,-1)
+SE = UnitVector(1,-1)
+E  = UnitVector(1,0)
+NE = UnitVector(1,1)
 
+#Value
+class Ray(Convertible): 
+    def __init__(self,point,angle):
+        self.point = point
+        self.angle = angle
+                
+
+class Scalar(float):
+    pass
+
+class Angle(Convertible):
+    # essence
+    def normalise(self,radians):
+        return Scalar(numpy.remainder(radians,2*numpy.pi))
+    def radians(self):
+        return self.essence()
+
+class ALine(Convertible):  
+    # essence  
+    def normalise(self,rawEssence):
+        return rawEssence/rawEssence.length()
+    def coordinates(self):        
+        return self.essence()
+    def __str__(self):
+        return 'ALine({coordinates})'.format(coordinates=self.coordinates)
+            
+    # derived
+    @converter
+    def yIntercept(self):
+        return Vector([-1*self.coordinates()[0]/self.coordinates()[1],-1*self.coordinates()[2]/self.coordinates()[1]])
+    @backConverter
+    def yInterceptToEssence(self,slopeOffset):
+        return self.normalise(Vector([slopeOffset[0],-1,slopeOffset[1]]))
+        
+    @converter
+    def xIntercept(self):
+        return Vector([-1*self.coordinates()[1]/self.coordinates()[0],-1*self.coordinates()[2]/self.coordinates()[0]])
+    @backConverter
+    def xInterceptToEssence(self,slopeOffset):
+        return self.normalise(Vector([-1,slopeOffset[0],slopeOffset[1]]))
+    
+    @converter
+    def ray(self):
+        pass
+    @backConverter
+    def rayToEssence(self,ray):
+        point = ray.point
+        slope = numpy.tan(ray.angle)
+        return self.normalise(Vector([slope,-1,point[1]-slope*point[0]]))
+        
+    # intelligence
+    def crossing(self,other):
+        equations = numpy.array((self.coordinates(),other.coordinates()))
+        crossing = Location(numpy.linalg.solve(equations[:,:2],-1*equations[:,2]))
+        return crossing
+
+    
 
 class Arrow(object):
     def __init__(self,origin,direction):
@@ -92,7 +199,7 @@ class Arrow(object):
         return self.origin.approximately(other.origin,margin) and self.direction.approximately(other.direction,margin)
         
     def angle(self):
-        return numpy.arctan2(self.direction[1],self.direction[0])
+        return Scalar(numpy.arctan2(self.direction[1],self.direction[0]))
     def along(self,length):
         return Location(self.origin+self.direction*length)
     def alongArrow(self,length):
@@ -122,18 +229,38 @@ class Arrow(object):
         return self.turnedRight().along(clearance)
     def leftRight(self,clearance):
         return [self.left(clearance),self.right(clearance)]
+    
+    def toLine(self):
+        return ALine(ray=Ray(self.origin,self.angle()))
+    def crossing(self,other):
+        return self.toLine().crossing(other.toLine())
 
+## Naked geometry
 class Segment(object):
     pass
 class Stroke(Segment):
     def __init__(self,targetLocation):
         self.targetLocation = targetLocation
+    def assertAlmostEqual(self,other):
+        self.targetLocation.assertAlmostEqual(other.targetLocation)
 class Arc(Segment):
     def __init__(self,targetLocation,origin,counterClockWise):
         self.targetLocation = targetLocation
         self.origin = origin
         self.counterClockWise = counterClockWise
+class ClosedContour(RotatableList):
+    def outset(self,outsetLength):
+        return self
+    def lines(self):
+        trace = LineList()
+        for thisStroke,nextStroke in zip(self,self<<1):
+            delta = nextStroke.targetLocation-thisStroke.targetLocation
+            trace.append(Line(numpy.linalg.norm(delta),startArrow=Arrow(thisStroke.targetLocation,UnitVector(delta))))
+        return trace
+class LineList(RotatableList):
+    pass
 
+## Visible geometry
 class Path(object):
     pass
 class Bend(Path):
@@ -168,14 +295,16 @@ class Bend(Path):
                             Arc(endEdge[1],  self.absoluteOrigin(),self.bendRadius>=0.), \
                             Stroke(endEdge[0]), \
                             Arc(startEdge[0],self.absoluteOrigin(),self.bendRadius< 0.)]
-        gerberLayer.addOutline(outlineSegments)
-        
+        gerberLayer.addOutline(outlineSegments)     
 class Line(Path):
     def __init__(self,length,startArrow=None):
         self.startArrow = startArrow
         self.length = length
     def __repr__(self):
         return 'Line({length})'.format(length=self.length)
+    def assertAlmostEqual(self,other):
+        self.startArrow.assertAlmostEqual(other.startArrow)
+        assertScalarAlmostEqual(self.length,other.length)
     @property
     def endArrow(self):
         return self.alongArrow(self.length)
@@ -194,17 +323,32 @@ class Line(Path):
                                 Stroke(endEdge[0]), \
                                 Stroke(startEdge[0])])
 
+
 class Rectangle(list):
     def __init__(self,startArrow,width,height,apertureNumber=None):
         self.startArrow = startArrow
+        if apertureNumber != None:
+            print 'Deprecated: rather give aperturenumber at draw time'
         self.apertureNumber = apertureNumber
         self.width = width
         self.height = height
-    def draw(self,gerberLayer):
+    def draw(self,gerberLayer,apertureNumber=None):
+        if apertureNumber == None:
+            apertureNumber = self.apertureNumber
         gerberLayer.addOutline([Stroke(self.startArrow.origin), \
                                 Stroke(self.startArrow.along(self.width)),  \
                                 Stroke(self.startArrow.alongArrow(self.width).left(self.height)), \
-                                Stroke(self.startArrow.left(self.height))],self.apertureNumber)
+                                Stroke(self.startArrow.left(self.height))],apertureNumber)
+                                
+class Square(list):
+    def __init__(self,center=None,width=None):
+        self.width = width
+        self.center = center
+    def draw(self,gerberLayer):
+        outline = []
+        for cornerCoordinates in (numpy.array([[-1,-1],[-1,1],[1,1],[1,-1]])*(self.width/2)+self.center).tolist():
+            outline += [Stroke(cornerCoordinates)]
+        gerberLayer.addOutline(outline)
 
 class Trace(list):
     def __init__(self,startArrow,width=None):
@@ -353,6 +497,7 @@ class Sma(object):
 
 class Soic8(object):
     padWidth = 1.52
+    padHeight = 0.6 #TODO demo hack
     pitch = 1.27
     span = 5.52
     
@@ -509,13 +654,59 @@ class ResistorEnd(End):
 #         
 #         drop = Line(self.dropWidth,self.startArrow.alongArrow(self.pinLength+self.pinClearance))
 #         drop.paint(solderMaskTop[1],self.trace.width+self.trace.gap)
-                                
+         
+class StrokedOutline(RotatableList):
+    def addPointsBefore(self,newPoints,verticalStep=None):
+        for point in newPoints:
+            self.insert(0,point)
+    def addPointsAfter(self,newPoints):
+        for point in newPoints[::-1]:
+            self.append(point)
+    @property
+    def strokes(self):
+        theStrokes = []
+        for (point,pointBefore,pointAfter) in zip(self,self >> 1, self << 1):
+            if isinstance(point,Location):
+                theStrokes += [Stroke(point)]
+            else:
+                theStrokes += point.strokes(pointBefore,pointAfter)
+        return theStrokes
+    def draw(self):
+        stack.topFile[0].addOutline(self.strokes)
+        groundFile[0].addOutline(self.strokes)
+        stack.mechanical[0].addOutline(self.strokes,apertureNumber=stack.mechanicalAperture)
+    @property
+    def rectangle(self):
+        (minimumX,minimumY,maximumX,maximumY) = (+numpy.inf,+numpy.inf,-numpy.inf,-numpy.inf)
+        for stroke in self.strokes:
+            point = stroke.targetLocation
+            minimumX = min(minimumX,point[0])
+            minimumY = min(minimumY,point[1])
+            maximumX = max(maximumX,point[0])
+            maximumY = max(maximumY,point[1])
+        return (minimumX,minimumY,maximumX,maximumY) 
+
+
+def soic8(soicLocation,angle=0.0):
+    dutFootprint = Soic8(soicLocation,padClearance=traceGap)
+    padTraces = dutFootprint.padTraces()
+ 
+    ## drawing the traces
+    for (padTrace,bendRadius,bendLength) in zip(padTraces,[-smallRadius,-bigRadius,bigRadius,smallRadius]*2,[smallTraceLength,bigTraceLength,bigTraceLength,smallTraceLength]*2):
+        trace = CoplanarTrace.fromTrace(padTrace,gap=traceGap,viaPitch=viaPitch,viaDiameter=viaFinishedHoleDiameter,viaStartOffset=0.,viaEndOffset=None,viaClearance=euroCircuitsViaClearance(viaFinishedHoleDiameter))
+        trace.append(Bend(bendLength,bendRadius))
+                
+        trace.draw(stack.topFile,stack.topSolderMask, stack.stack.drillFile, drillLeftSkip, drillRightSkip)
+
                                                                                                                                                 
 if __name__ == '__main__':
-    trace = Trace(Arrow(Location(0.,0.),UnitVector(1.,0.)))
-    trace.append(Bend(numpy.pi/2,1.))
-    trace.append(Line(1.))
-    trace.append(Bend(numpy.pi/2,-1.))
-        
-    alongArrow = trace.alongArrow(numpy.pi/2+1+numpy.pi/4)
-    alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),UnitVector(1.,1.)))
+    a = Arrow(Location(2,1),NE)
+    l = a.toLine()
+    m = ALine(Vector([1,2,3]))
+#    trace = Trace(Arrow(Location(0.,0.),UnitVector(1.,0.)))
+#    trace.append(Bend(numpy.pi/2,1.))
+#    trace.append(Line(1.))
+#    trace.append(Bend(numpy.pi/2,-1.))
+#        
+#    alongArrow = trace.alongArrow(numpy.pi/2+1+numpy.pi/4)
+#    alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),UnitVector(1.,1.)))

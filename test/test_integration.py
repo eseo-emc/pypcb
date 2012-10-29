@@ -2,8 +2,7 @@ import unittest
 import nose
 import numpy
 
-from rs274x import *
-from geometry import *
+from pypcb import *
 
 class LineToGerber_test(unittest.TestCase):
     def setUp(self):
