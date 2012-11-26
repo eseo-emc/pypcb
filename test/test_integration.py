@@ -6,7 +6,7 @@ from pypcb import *
 
 class LineToGerber_test(unittest.TestCase):
     def setUp(self):
-        self.line = Line(startArrow=Arrow(Location(0.0,1.0),UnitVector(1.,1.)),length=3*numpy.sqrt(2.))
+        self.line = LineSegment(startArrow=Arrow(Location(0.0,1.0),Direction(1.,1.)),length=3*numpy.sqrt(2.))
         self.gerberLayer = GerberFile('gerberFile',decimalPlaces=1)[0]
 
     def test_lineGerber(self):
@@ -25,7 +25,7 @@ G37*
 
 class Coplanar_test(unittest.TestCase):
     def setUp(self):
-        self.path = CoplanarTrace(startArrow=Arrow(Location(0.,0.),UnitVector(1.,0.)) ,width=10., gap=0.2)
+        self.path = CoplanarTrace(startArrow=Arrow(Location(0.,0.),Direction(1.,0.)) ,width=10., gap=0.2)
         self.gerberFile = GerberFile('gerberFile',decimalPlaces=1)
     
     def test_bendGerber(self):

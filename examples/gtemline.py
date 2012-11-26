@@ -1,198 +1,93 @@
 from pypcb import *
-import datetime
-#import numpy
+stack = Stack(numberOfFaces=4)
+stack[-1].silkscreen.export = False # cheaper
 
-class StrokedOutline(RotatableList):
-    def addPointsBefore(self,newPoints,verticalStep=None):
-        for point in newPoints:
-            self.insert(0,point)
-    def addPointsAfter(self,newPoints):
-        for point in newPoints[::-1]:
-            self.append(point)
-    @property
-    def strokes(self):
-        theStrokes = []
-        for (point,pointBefore,pointAfter) in zip(self,self >> 1, self << 1):
-            if isinstance(point,Location):
-                theStrokes += [Stroke(point)]
-            else:
-                theStrokes += point.strokes(pointBefore,pointAfter)
-        return theStrokes
-    def draw(self):
-        topFile[0].addOutline(self.strokes)
-        groundFile[0].addOutline(self.strokes)
-        mechanical[0].addOutline(self.strokes,apertureNumber=mechanicalAperture)
-    @property
-    def rectangle(self):
-        (minimumX,minimumY,maximumX,maximumY) = (+numpy.inf,+numpy.inf,-numpy.inf,-numpy.inf)
-        for stroke in self.strokes:
-            point = stroke.targetLocation
-            minimumX = min(minimumX,point[0])
-            minimumY = min(minimumY,point[1])
-            maximumX = max(maximumX,point[0])
-            maximumY = max(maximumY,point[1])
-        return (minimumX,minimumY,maximumX,maximumY) 
+card = GtemCard(frequencyLimit=20e9)
+card.draw(stack)
+
+traceWidth = 0.67 # 50 ohm microstrip on h=360um, er=4.3, t=25um, f=10GHz, according to http://www1.sphere.ne.jp/i-lab/ilab/tool/ms_line_e.htm
+effectiveRelativePermittivity = 3.243 # 50 ohm microstrip on h=360um, er=4.3, t=25um, f=10GHz, according to ADS LineCalc
+longLength = 30.
 
 
-## file initialisation
-platedFile = Excellon('Drill Plated',plated=True)
-nonPlatedFile = Excellon('Drill Non-plated',plated=False)
-drillFile = HoleFile()
+def drawMolexAndVias(startArrow,traceFace):
+    groundFaces = map(lambda faceNumber: stack[faceNumber],range(1,traceFace.faceNumber))
+    connector = MolexSma(startArrow,stack[0],signalFaceDiameterTuples=[(traceFace,traceWidth)],groundFaces=groundFaces,groundStartAngle=+0.5*numpy.pi,groundStopAngle=-0.5*numpy.pi,groundVias=2)
+    connector.draw()
 
-topFile = GerberFile('Signal 1 Top',physicalLayer=1)
-topSolderMask = GerberFile('Soldermask Top')
-topSilkScreen = GerberFile('Silkscreen Top')
-topSilkScreenLine = topSilkScreen.addCircularAperture(0.23)
+# 20mm trace
+def drawTrace(length,startArrow,face):
+    trace = LineSegment(length,startArrow)
+    trace.paint(face.copper[2],traceWidth)
+    drawMolexAndVias(trace.startArrow,face)
+    drawMolexAndVias(trace.endArrow,face)
+    
+drawTrace(longLength,Arrow(card.center(),E).alongArrow(-0.5*longLength),stack[-1])
 
-bottomSolderMask = GerberFile('Soldermask Bottom')
-bottomSilkScreen = GerberFile('Silkscreen Bottom')
+# Corners
+corneredTrace0 = LineSegment(longLength/2,Arrow(card.center()+Location(-0.5*longLength,30),E))
+corner0 = LeftMiteredBend(corneredTrace0.endArrow,traceWidth,stack.dielectricThicknesses[0])
+corneredTrace1 = LineSegment(longLength/3,corner0.endArrow)
+corner1 = RightMiteredBend(corneredTrace1.endArrow,traceWidth,stack.dielectricThicknesses[0])
+corneredTrace2 = LineSegment(longLength/2,corner1.endArrow)
 
-
-innerOneFile = GerberFile('Signal 2 Inner',physicalLayer=2)
-innerTwoFile = GerberFile('Signal 3 Inner',physicalLayer=3)
-bottomFile = GerberFile('Signal 4 Bottom',physicalLayer=4)
-
-mechanical = GerberFile('Mechanical Outline')
-mechanicalApertureDiameter = 0.2
-mechanicalAperture = mechanical.addCircularAperture(mechanicalApertureDiameter)
-
-
-class StrokedOutline(RotatableList):
-    def addPointsBefore(self,newPoints,verticalStep=None):
-        for point in newPoints:
-            self.insert(0,point)
-    def addPointsAfter(self,newPoints):
-        for point in newPoints[::-1]:
-            self.append(point)
-    @property
-    def strokes(self):
-        theStrokes = []
-        for (point,pointBefore,pointAfter) in zip(self,self >> 1, self << 1):
-            if isinstance(point,Location):
-                theStrokes += [Stroke(point)]
-            else:
-                theStrokes += point.strokes(pointBefore,pointAfter)
-        return theStrokes
-    def draw(self):
-        topFile[0].addOutline(self.strokes)
-        groundFile[0].addOutline(self.strokes)
-        mechanical[0].addOutline(self.strokes,apertureNumber=mechanicalAperture)
-    @property
-    def rectangle(self):
-        (minimumX,minimumY,maximumX,maximumY) = (+numpy.inf,+numpy.inf,-numpy.inf,-numpy.inf)
-        for stroke in self.strokes:
-            point = stroke.targetLocation
-            minimumX = min(minimumX,point[0])
-            minimumY = min(minimumY,point[1])
-            maximumX = max(maximumX,point[0])
-            maximumY = max(maximumY,point[1])
-        return (minimumX,minimumY,maximumX,maximumY) 
+corneredTrace0.paint(stack[-1].copper[10],traceWidth)
+corner0.drawToFace(stack[-1])
+corneredTrace1.paint(stack[-1].copper[10],traceWidth)
+corner1.drawToFace(stack[-1])
+corneredTrace2.paint(stack[-1].copper[10],traceWidth)
 
 
-def soic8(soicLocation,angle=0.0):
-    dutFootprint = Soic8(soicLocation,padClearance=traceGap)
-    padTraces = dutFootprint.padTraces()
- 
-    ## drawing the traces
-    for (padTrace,bendRadius,bendLength) in zip(padTraces,[-smallRadius,-bigRadius,bigRadius,smallRadius]*2,[smallTraceLength,bigTraceLength,bigTraceLength,smallTraceLength]*2):
-        trace = CoplanarTrace.fromTrace(padTrace,gap=traceGap,viaPitch=viaPitch,viaDiameter=viaFinishedHoleDiameter,viaStartOffset=0.,viaEndOffset=None,viaClearance=euroCircuitsViaClearance(viaFinishedHoleDiameter))
-        trace.append(Bend(bendLength,bendRadius))
-                
-        trace.draw(topFile,topSolderMask, drillFile, drillLeftSkip, drillRightSkip)
+# SOIC8 and trace
+ic = Soic8(Arrow(card.center()+Location(0.5*longLength,20),E))
+ic.padHeight = traceWidth
+ic.draw(stack[-1])
+trace2 = LineSegment(longLength,ic.endArrows()[0])
+groundFacePadTuples = map(lambda face: (face,traceWidth),stack)
+
+def padCenterArrow(pinNumber):
+    return ic.endArrows()[pinNumber].alongArrow(-ic.padWidth/2)
+for groundPinNumber in range(1,7):
+    Via(padCenterArrow(groundPinNumber).origin,padFaceDiameterTuples=groundFacePadTuples).draw(stack)
+Via(padCenterArrow(7).origin,padFaceDiameterTuples=[(stack[0],traceWidth),(stack[-1],traceWidth)],isolateFaces=[stack[0]]).draw(stack)
+
+outputTrace = LineSegment(8.,padCenterArrow(7))
+outputTrace.outline(traceWidth).drawToFace(stack[0],isolation=None)
+
+R0805ToGround(outputTrace.startArrow.alongArrow(2.).outsetArrow(traceWidth/2).turnedLeft()).draw(stack[0])
+
+MolexSmdSma(outputTrace.endArrow,stack[0]).draw()
+
+trace2.paint(stack[-1].copper[2],traceWidth)
+drawMolexAndVias(trace2.endArrow,stack[-1])
+
+# Sensors
+bottomCenterArrow = Arrow(card.center()+Vector([0,-32]),E)
+ESensor(bottomCenterArrow.alongArrow(+15),stack[-1]).draw()
+HSensor(bottomCenterArrow.alongArrow(+30),stack[-1]).draw()
+drawTrace(longLength,bottomCenterArrow.alongArrow(-longLength),stack[1])
+
+# Ring resonators
+
+class Resonator(DrawGroup):
+    margin = 5.0
+    
+    def __init__(self,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity):
+        ring = RingResonator(stack[0],traceWidth,firstResonanceFrequency,effectiveRelativePermittivity)
+        DrawGroup.__init__(self,[ring])
         
-## board outline creation
-pcbSize = 105.
-groundPlane = Rectangle(Arrow(Location(0.,0.),UnitVector(1.,0.)),pcbSize,pcbSize)
-groundPlane.draw(topFile[0])
-groundPlane.draw(innerOneFile[0])
-groundPlane.draw(innerTwoFile[0])
-groundPlane.draw(bottomFile[0])
-groundPlane.draw(mechanical[0],mechanicalAperture)
+        for endArrow in ring.endArrows():
+            feedTrace = MicrostripTrace([LineSegment(5.,endArrow)],traceWidth,stack[0])
+            self.append(feedTrace)
+            self.append(MolexSmdSma(feedTrace.endArrow,stack[0]))
+        
+        groundPlane = self.rectangularHull().outset(self.margin)
+        groundPlane.gerberLayer = stack[1].copper[0]
+        self.append(groundPlane)
 
+resonator = Resonator(traceWidth,9e9,effectiveRelativePermittivity)
+resonator.startArrow = card.groundPlane.bottomRightArrow.alongArrow(-1.5*resonator.outerDiameter()).turnedRight().alongArrow(-1.5*resonator.outerDiameter())
+resonator.topRight = card.groundPlane.bottomRight
+resonator.draw()
 
-layerMarker = LayerMarker(Arrow(Location(0.,0.),UnitVector(1.,0.)), 4)
-
-def groundVoidRectangle(centerLocation,width,cornerHeight,gerberFile,platedFile=None):
-    radius = width/2
-    outlineCoordinates = numpy.array([[-radius,-radius+cornerHeight],
-                                      [-radius,+radius-cornerHeight],
-                                      [-radius+cornerHeight,+radius],
-                                      [+radius-cornerHeight,+radius],
-                                      [+radius,+radius-cornerHeight],
-                                      [+radius,-radius+cornerHeight],
-                                      [+radius-cornerHeight,-radius],
-                                      [-radius+cornerHeight,-radius]]) + centerLocation
-    
-    outline = []
-    for coordinate in outlineCoordinates.tolist():
-        stroke = Stroke(Location(numpy.array(coordinate)))
-        outline += [stroke]
-                
-    gerberFile[1].addOutline(outline)
-    
-centerLocation = Location(pcbSize/2,pcbSize/2)
-
-bottomWidth = 93.5-2
-bottomCornerHeight = 6.0
-groundVoidRectangle(centerLocation,bottomWidth,bottomCornerHeight,bottomFile)
-groundVoidRectangle(centerLocation,bottomWidth-0.360,bottomCornerHeight,innerTwoFile)
-groundVoidRectangle(centerLocation,bottomWidth-0.360-0.710,bottomCornerHeight,innerOneFile)
-
-
-## fixation holes
-holeDiagonal = 129.0
-holeRadius = holeDiagonal/numpy.sqrt(2)/2
-holeCoordinates = numpy.array([[-1,-1],
-                               [-1,+1],
-                               [+1,+1],
-                               [+1,-1]])*holeRadius + centerLocation
-for coordinate in holeCoordinates.tolist():
-    drillFile.addHole(Hole(Location(numpy.array(coordinate)),3.5,plated=False))
-
-#origin = Location(50.,50.)
-#rectangleA = soic8pcb(origin)
-#leftOfOrigin = origin[0] - rectangleA[0]
-#rectangleB = soic8pcb(Location(rectangleA[2]+leftOfOrigin+2.,50.))
-#rectangleC = soic8pcb(Location(rectangleB[2]+leftOfOrigin+2.,50.))
-
-
-# docs
-#topRightCorner = Location(calibrationKitOutline.rectangle[2],calibrationKitOutline.rectangle[3])
-#textArrow = Arrow(topRightCorner-Vector(2.0,3.5),UnitVector(1.,0.))
-#StrokeText(textArrow,'Made with pyPCB',height=1.5,align=-1,mirrored=True).draw(bottomSilkScreen[0])
-#for line in [   'SOIC8 Centimetre DPI',
-#                datetime.date.today().strftime('%Y-%m-%d'),
-#                'Sjoerd OP \'T LAND',
-#                'Groupe ESEO, France',
-#                '-',
-#              'eurocircuits  STD-4L',
-#                     'Cu+Au   35 um',
-#              'prepreg 7628  362 um',
-#                 'er @ 2GHz     4.1',
-#                     'width  .60 mm',
-#                       'gap  .26 mm']:
-#    StrokeText(textArrow,line,height=1.3,align=+1).draw(topSilkScreen[0])
-#    textArrow = textArrow + Vector(0.,-1.3-1)
-
-
-for file in [topFile,innerOneFile,innerTwoFile,bottomFile]:
-    layerMarker.draw(file)
-
-## writing out of gerber and NC excellon files
-topSolderMask.writeOut()
-topFile.writeOut()
-topSilkScreen.writeOut()
-
-innerOneFile.writeOut()
-innerTwoFile.writeOut()
-
-bottomSolderMask.writeOut()
-bottomFile.writeOut()
-bottomSilkScreen.writeOut()
-
-mechanical.writeOut()
-# breakRouting.writeOut()
-
-drillFile.draw(platedFile,nonPlatedFile)
-platedFile.writeOut()
-nonPlatedFile.writeOut()
+stack.writeOut()

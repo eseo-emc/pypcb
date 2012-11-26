@@ -6,8 +6,8 @@ class StrokeText_test(unittest.TestCase):
     def setUp(self):
         self.testFile = GerberFile('test',decimalPlaces=4)
     def test_testText(self):
-        text = StrokeText(Arrow(Location(20.,10.),UnitVector(1.,0.)),'Test',lineWidth=1.0,height=5.0)
-        text.draw(self.testFile[0])
+        text = StrokeText(Arrow(Location(20.,10.),Direction(1.,0.)),'Test',self.testFile[0],lineWidth=1.0,height=5.0)
+        text.draw()
         
         self.assertEqual(str(self.testFile), \
 '''G04 ===== Begin FILE IDENTIFICATION =====*

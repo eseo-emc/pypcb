@@ -15,23 +15,24 @@ class LayerMarker(object):
     def draw(self,gerberFile):
         width = (self.numberOfLayers*2-1)*self.characterHeight + 2*self.sideMargins
         height = self.lowerMargin + self.characterHeight + self.upperMargin
-        Rectangle(self.startArrow,width,height).draw(gerberFile[1])
+        Rectangle(self.startArrow,width,height,gerberLayer=gerberFile[1]).draw()
         
         textStart = self.startArrow.alongArrow(self.sideMargins).turnedLeft().alongArrow(self.lowerMargin).turnedRight()
-        text = StrokeText(textStart.alongArrow((gerberFile.physicalLayer-1)*2*self.characterHeight),'{0:d}'.format(gerberFile.physicalLayer),height=self.characterHeight)
-        text.draw(gerberFile[2])
+        text = StrokeText(textStart.alongArrow((gerberFile.physicalLayer-1)*2*self.characterHeight),'{0:d}'.format(gerberFile.physicalLayer),gerberFile[2],height=self.characterHeight)
+        text.draw()
 
-class StrokeText(object):
-    def __init__(self,startArrow,textString,lineWidth=None,height=1.0,align=-1,mirrored=False):
+class StrokeText(Drawable):
+    def __init__(self,startArrow,textString,gerberLayer,lineWidth=None,height=1.0,align=-1,mirrored=False):
         self.startArrow = startArrow
         self.textString = textString
+        self.gerberLayer = gerberLayer
         if lineWidth is None:
             lineWidth = height/6.5
         self.lineWidth = lineWidth
         self.height = height
         self.align = align
         self.mirrored = mirrored
-    def draw(self,gerberLayer):
+    def draw(self):
         strokes = font.stringStrokes(self.textString)
         strokes = strokes - (self.align+1)*numpy.array([float(len(self.textString))/2.,0])
         if self.mirrored:
@@ -43,9 +44,12 @@ class StrokeText(object):
         strokes = numpy.apply_along_axis(lambda coordinates: rotation.dot(coordinates),arr=strokes,axis=1)
         strokes = strokes + self.startArrow.origin
         
-        apertureNumber = gerberLayer.gerberFile.addCircularAperture(self.lineWidth)
+        apertureNumber = self.gerberLayer.gerberFile.addCircularAperture(self.lineWidth)
         for (fromLocation,toLocation) in zip(strokes[0::2,:],strokes[1::2,:]):
-            gerberLayer.addSingleStroke(fromLocation,toLocation,apertureNumber)
+            self.gerberLayer.addSingleStroke(fromLocation,toLocation,apertureNumber)
+    def rectangularHull(self):
+        # TODO: fix this
+        return Rectangle(self.startArrow,0,0)
 
 class Character(object):
     def __init__(self,strokeList,scale):
@@ -89,9 +93,9 @@ font = Font('strokefont.txt')
 
 if __name__ == '__main__':
     from rs274x import *
-    
-    text = StrokeText(Arrow(Location(20.,10.),UnitVector(1.,0.)),'Xest',height=5.0,align=-1)
-    testFile = GerberFile('TextTest',decimalPlaces=4)
-    text.draw(testFile[0])
+
+    testFile = GerberFile('TextTest',decimalPlaces=4)    
+    text = StrokeText(Arrow(Location(20.,10.),E),'Xest',testFile[0],height=5.0,align=-1)
+    text.draw()
     
     testFile.writeOut('TextTest')

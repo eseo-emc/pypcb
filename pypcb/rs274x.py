@@ -64,12 +64,13 @@ class GerberFile(object):
     def comment(cls,commentString):
         return 'G04 {0}*\n'.format(commentString)
         
-    def __init__(self,name,inverted=False,decimalPlaces=5,physicalLayer=None):
+    def __init__(self,name,inverted=False,decimalPlaces=5,physicalLayer=None,export=True):
         self.name = name
         self.inverted = inverted
         self.decimalPlaces = decimalPlaces
         self._integerPlaces = 5
         self.physicalLayer = physicalLayer
+        self.export = export
         
         self.layers = []
         self.addLayer()
@@ -140,17 +141,18 @@ class GerberFile(object):
         return string
 
     def writeOut(self,name=None):
-        if name == None:
-            name = self.name
-        
-        outputDirectory = os.path.abspath('../output')
-        if not os.path.exists(outputDirectory):
-            print 'Creating output directory ' + outputDirectory
-            os.makedirs(outputDirectory)
-        self.fileHandle = open(outputDirectory + '/' + name + '.gbr','w')
+        if self.export:
+            if name == None:
+                name = self.name
             
-        self.fileHandle.write(str(self))
-        self.fileHandle.close()
+            outputDirectory = os.path.abspath('../output')
+            if not os.path.exists(outputDirectory):
+                print 'Creating output directory ' + outputDirectory
+                os.makedirs(outputDirectory)
+            self.fileHandle = open(outputDirectory + '/' + name + '.gbr','w')
+                
+            self.fileHandle.write(str(self))
+            self.fileHandle.close()
 
     def imageName(self):
         return '%IN{0}*%\n'.format(self.name.upper())

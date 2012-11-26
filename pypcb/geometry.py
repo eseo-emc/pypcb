@@ -5,15 +5,46 @@ from lazy import *
 
 collisionDetection = False # set to False to speed up (useful for debugging)
 
-def mil(length):
-    return length*0.0254
+def m(lengthInMeters):
+    return lengthInMeters*1000.
+def mil(lengthInMil):
+    return lengthInMil*0.0254
 
 
     
 def assertScalarAlmostEqual(first,second,margin=1e-6):
     assert numpy.linalg.norm(first-second) < margin, '{first} is not almost {second}'.format(first=first,second=second)
 
+class DrawGroup(list):
+    def draw(self):
+        for drawable in self:
+            drawable.draw()
+    def translate(self,translationVector):
+        for drawable in self:
+            drawable.translate(translationVector)
+    def rectangularHull(self):
+        bottomLeft = Location(+numpy.inf,+numpy.inf)
+        topRight = Location(-numpy.inf,-numpy.inf)
+        for drawable in self:
+            drawableRectangle = drawable.rectangularHull()
+            bottomLeft = numpy.min([drawableRectangle.bottomLeft, bottomLeft],0)
+            topRight =   numpy.max([drawableRectangle.topRight,   topRight],0)
+        return Rectangle(bottomLeft=bottomLeft,topRight=topRight)
+        
+    @property
+    def topRight(self):
+        return self.rectangularHull().topRight
+    @topRight.setter
+    def topRight(self,newValue):
+        self.translate(newValue-self.topRight)
 
+class Drawable(object):
+    def rectangularHull(self):
+        raise NotImplementedError
+    def translate(self,translationVector):
+        self.startArrow = self.startArrow.translated(translationVector)
+    def draw(self):
+        raise NotImplementedError
 
 class Hole(object):
     margin = 0.1
@@ -32,9 +63,13 @@ class Hole(object):
         
             
 class HoleFile(object):
-    def __init__(self):
+    def __init__(self,platedFile,nonPlatedFile):
+        self.platedFile = platedFile
+        self.nonPlatedFile = nonPlatedFile        
+        
         self.fixedHoles = []
         self.looseHoles = []
+        
         
     def addHole(self,newHole,fixed=True):
         if fixed or collisionDetection == False:
@@ -49,12 +84,15 @@ class HoleFile(object):
             else:
                 self.looseHoles.append(newHole)
     
-    def draw(self,platedFile,nonPlatedFile):
+    def writeOut(self):
         for hole in self.fixedHoles + self.looseHoles:
             if hole.plated:
-                platedFile.addHole(hole.location,hole.diameter)
+                self.platedFile.addHole(hole.location,hole.diameter)
             else:
-                nonPlatedFile.addHole(hole.location,hole.diameter)
+                self.nonPlatedFile.addHole(hole.location,hole.diameter)
+                
+        self.platedFile.writeOut()
+        self.nonPlatedFile.writeOut()
 
 ## Collections
 class ApproximateList(list):
@@ -113,25 +151,24 @@ class Location(PlaneVector):
         return Location(sum[0],sum[1])
 
 
-class UnitVector(PlaneVector):
+class Direction(PlaneVector):
     def __new__(cls,x,y=None):
         newVector = PlaneVector.__new__(cls,x,y)
         newVector /= newVector.length()
         return newVector
-N  = UnitVector(0,1)
-NW = UnitVector(-1,1)
-W  = UnitVector(-1,0)
-SW = UnitVector(-1,-1)
-S  = UnitVector(0,-1)
-SE = UnitVector(1,-1)
-E  = UnitVector(1,0)
-NE = UnitVector(1,1)
+    def angle(self):
+        return numpy.arctan2(self[1],self[0])
+N  = Direction(0,1)
+NW = Direction(-1,1)
+W  = Direction(-1,0)
+SW = Direction(-1,-1)
+S  = Direction(0,-1)
+SE = Direction(1,-1)
+E  = Direction(1,0)
+NE = Direction(1,1)
 
 #Value
-class Ray(Convertible): 
-    def __init__(self,point,angle):
-        self.point = point
-        self.angle = angle
+
                 
 
 class Scalar(float):
@@ -151,7 +188,7 @@ class ALine(Convertible):
     def coordinates(self):        
         return self.essence()
     def __str__(self):
-        return 'ALine({coordinates})'.format(coordinates=self.coordinates)
+        return 'ALine({coordinates})'.format(coordinates=self.coordinates())
             
     # derived
     @converter
@@ -169,13 +206,13 @@ class ALine(Convertible):
         return self.normalise(Vector([-1,slopeOffset[0],slopeOffset[1]]))
     
     @converter
-    def ray(self):
-        pass
+    def arrow(self):
+        raise NotImplementedError
     @backConverter
-    def rayToEssence(self,ray):
-        point = ray.point
-        slope = numpy.tan(ray.angle)
-        return self.normalise(Vector([slope,-1,point[1]-slope*point[0]]))
+    def arrowToEssence(self,arrow):
+        origin = arrow.origin
+        slope = numpy.tan(arrow.direction.angle())
+        return self.normalise(Vector([slope,-1,origin[1]-slope*origin[0]]))
         
     # intelligence
     def crossing(self,other):
@@ -200,14 +237,10 @@ class Arrow(object):
         
     def angle(self):
         return Scalar(numpy.arctan2(self.direction[1],self.direction[0]))
-    def along(self,length):
-        return Location(self.origin+self.direction*length)
-    def alongArrow(self,length):
-        return Arrow(self.along(length),self.direction)
     def reversed(self):
         return self.rotated(numpy.pi)
     def rotated(self,rotationAngle):
-        return Arrow(self.origin,UnitVector(numpy.cos(self.angle()+rotationAngle),numpy.sin(self.angle()+rotationAngle)))
+        return Arrow(self.origin,Direction(numpy.cos(self.angle()+rotationAngle),numpy.sin(self.angle()+rotationAngle)))
     @classmethod
     def rotationMatrix(cls,rotationAngle):
         return numpy.array([[numpy.cos(rotationAngle),-numpy.sin(rotationAngle)],
@@ -216,7 +249,7 @@ class Arrow(object):
         rotationMatrix = self.rotationMatrix(rotationAngle)
         radius = self.origin - rotationOrigin
         newLocation = rotationOrigin + numpy.dot(rotationMatrix,radius)
-        newDirection = UnitVector(numpy.dot(rotationMatrix,self.direction))
+        newDirection = Direction(numpy.dot(rotationMatrix,self.direction))
         return Arrow(newLocation,newDirection)
     
     def turnedLeft(self):
@@ -227,13 +260,28 @@ class Arrow(object):
         return self.turnedLeft().along(clearance)
     def right(self,clearance):
         return self.turnedRight().along(clearance)
+        
     def leftRight(self,clearance):
         return [self.left(clearance),self.right(clearance)]
+    def rightLeft(self,clearance):
+        return [self.right(clearance),self.left(clearance)]        
+    def outsetArrow(self,clearance):
+        return Arrow(self.right(clearance),self.direction)
+    def repeatRight(self,pitch,repetitions):
+        repeatedArrows = []
+        for clearance in numpy.arange(repetitions)*pitch:
+            repeatedArrows += [self.outsetArrow(clearance)]
+        return repeatedArrows
+        
+    def along(self,length):
+        return Location(self.origin+self.direction*length)
+    def alongArrow(self,length):
+        return Arrow(self.along(length),self.direction)
+    def translated(self,translationVector):
+        return Arrow(self.origin+translationVector,self.direction)
     
-    def toLine(self):
-        return ALine(ray=Ray(self.origin,self.angle()))
     def crossing(self,other):
-        return self.toLine().crossing(other.toLine())
+        return ALine(arrow=self).crossing(ALine(arrow=other))
 
 ## Naked geometry
 class Segment(object):
@@ -241,6 +289,8 @@ class Segment(object):
 class Stroke(Segment):
     def __init__(self,targetLocation):
         self.targetLocation = targetLocation
+    def __repr__(self):
+        return 'Stroke({location})'.format(location=self.targetLocation)
     def assertAlmostEqual(self,other):
         self.targetLocation.assertAlmostEqual(other.targetLocation)
 class Arc(Segment):
@@ -249,22 +299,69 @@ class Arc(Segment):
         self.origin = origin
         self.counterClockWise = counterClockWise
 class ClosedContour(RotatableList):
-    def outset(self,outsetLength):
-        return self
+    def outset(self,outsetClearance):
+        strokes = []
+        for location in self.lines().outsetLocations(outsetClearance):
+            strokes += [Stroke(location)]
+        return ClosedContour(strokes)
+    def corners(self):
+        locations = []
+        for stroke in self:
+            locations += [stroke.targetLocation]
+        return locations
     def lines(self):
-        trace = LineList()
+        trace = LineList([])
         for thisStroke,nextStroke in zip(self,self<<1):
             delta = nextStroke.targetLocation-thisStroke.targetLocation
-            trace.append(Line(numpy.linalg.norm(delta),startArrow=Arrow(thisStroke.targetLocation,UnitVector(delta))))
+            trace.append(LineSegment(numpy.linalg.norm(delta),startArrow=Arrow(thisStroke.targetLocation,Direction(delta))))
         return trace
-class LineList(RotatableList):
-    pass
+    def draw(self,gerberLayer,apertureNumber=None):
+        gerberLayer.addOutline(self,apertureNumber)
+    def drawToFace(self,face,isolation=0.,solderMask=False):
+        self.draw(face.copper[20])
+        if isolation == None:
+            isolation = face.stack.classification.minimumOuterPadToPad
+        if isolation > 0.:
+            self.outset(isolation).draw(face.copper[11])
+        if solderMask:
+            self.outset(face.stack.classification.solderMaskMisalignment).draw(face.solderMask[10])
+            
+    def rectangularHull(self):
+        (minimumX,minimumY,maximumX,maximumY) = (+numpy.inf,+numpy.inf,-numpy.inf,-numpy.inf)
+        for corner in self.corners():
+            minimumX = min(minimumX,corner[0])
+            minimumY = min(minimumY,corner[1])
+            maximumX = max(maximumX,corner[0])
+            maximumY = max(maximumY,corner[1])
+        return Rectangle(bottomLeft=Location(minimumX,minimumY),topRight=Location(maximumX,maximumY) )
+
+class ClosedStrokeContour(ClosedContour):
+    def __init__(self,locationList):
+        strokes = []
+        for location in locationList:
+            strokes += [Stroke(location)]
+        ClosedContour.__init__(self,strokes)
+
 
 ## Visible geometry
 class Path(object):
-    pass
+    def closed(self):
+        return self.endArrow.origin.approximately(self.startArrow.origin)
+    def stamp(self,targetPitch,stampFunctionOfArrow,center=False):
+        if center:
+            offset = 0.5*targetPitch
+        else:
+            offset = 0.
+        numberOfStamps = int(self.length/float(targetPitch))
+        realPitch = self.length/numberOfStamps
+        if self.closed() or center:
+            numberOfSteps = numberOfStamps
+        else:
+            numberOfSteps = numberOfStamps + 1
+        for length in numpy.arange(numberOfSteps)*realPitch:
+            stampFunctionOfArrow(self.alongArrow(length+offset))
 class Bend(Path):
-    def __init__(self,length,bendRadius,startArrow=Arrow(Location(0.,0.),UnitVector(1.,0.))):
+    def __init__(self,length,bendRadius,startArrow=Arrow(Location(0.,0.),Direction(1.,0.))):
         self.startArrow = startArrow
         self.length = length
         self.bendRadius = bendRadius
@@ -296,12 +393,52 @@ class Bend(Path):
                             Stroke(endEdge[0]), \
                             Arc(startEdge[0],self.absoluteOrigin(),self.bendRadius< 0.)]
         gerberLayer.addOutline(outlineSegments)     
-class Line(Path):
+
+class MiteredBend(Path):
+    def __init__(self,startArrow,width,thickness):
+        '''http://www.microwaves101.com/encyclopedia/mitered_bends.cfm'''
+        self.startArrow = startArrow
+        self.width = width
+        self.thickness = thickness
+    @property
+    def _straightExtension(self):
+        squareDiagonal = self.width * numpy.sqrt(2)
+        halfDiagonal = squareDiagonal * (0.52 + 0.65*numpy.exp(-1.35*self.width/self.thickness))
+        return (halfDiagonal-squareDiagonal/2)*numpy.sqrt(2)
+    @property
+    def _lengthToVirtualCorner(self):
+        return self.width/2. + self._straightExtension
+    def _startLeftRight(self):
+        return self.startArrow.leftRight(self.width/2)
+    def _endRightLeft(self):
+        return self.endArrow.rightLeft(self.width/2)
+    def drawToFace(self,*args,**kwargs):
+        self.outline().drawToFace(*args,**kwargs)
+
+    
+class RightMiteredBend(MiteredBend): 
+    @property
+    def endArrow(self):
+        return self.startArrow.alongArrow(self._lengthToVirtualCorner).turnedRight().alongArrow(self._lengthToVirtualCorner)
+    def outline(self):
+        return ClosedStrokeContour(self._startLeftRight() + 
+            [self.startArrow.alongArrow(self._straightExtension).right(self.width/2)] +
+            self._endRightLeft())
+class LeftMiteredBend(MiteredBend): 
+    @property
+    def endArrow(self):
+        return self.startArrow.alongArrow(self._lengthToVirtualCorner).turnedLeft().alongArrow(self._lengthToVirtualCorner)
+    def outline(self):
+        return ClosedStrokeContour(self._startLeftRight() + 
+            self._endRightLeft() +
+            [self.startArrow.alongArrow(self._straightExtension).left(self.width/2)])        
+        
+class LineSegment(Path):
     def __init__(self,length,startArrow=None):
         self.startArrow = startArrow
         self.length = length
     def __repr__(self):
-        return 'Line({length})'.format(length=self.length)
+        return 'LineSegment({length})'.format(length=self.length)
     def assertAlmostEqual(self,other):
         self.startArrow.assertAlmostEqual(other.startArrow)
         assertScalarAlmostEqual(self.length,other.length)
@@ -312,68 +449,123 @@ class Line(Path):
     def endArrow(self,newEndArrow):
         self.startArrow = newEndArrow.alongArrow(-self.length)
         self.endArrow.assertAlmostEqual(newEndArrow)
-        
+    
+    def reversed(self):
+        return LineSegment(self.length,self.endArrow.reversed())
+    
     def alongArrow(self,length):
         return self.startArrow.alongArrow(length)
     def paint(self,gerberLayer,width):
+        self.outline(width).draw(gerberLayer)
+    
+    def outline(self,width):
         startEdge = self.startArrow.leftRight(width/2)
         endEdge = self.endArrow.leftRight(width/2)
-        gerberLayer.addOutline([Stroke(startEdge[1]), \
-                                Stroke(endEdge[1]),  \
-                                Stroke(endEdge[0]), \
-                                Stroke(startEdge[0])])
+        return ClosedContour([Stroke(startEdge[1]), \
+                              Stroke(endEdge[1]),  \
+                              Stroke(endEdge[0]), \
+                              Stroke(startEdge[0])])
 
 
-class Rectangle(list):
-    def __init__(self,startArrow,width,height,apertureNumber=None):
-        self.startArrow = startArrow
-        if apertureNumber != None:
-            print 'Deprecated: rather give aperturenumber at draw time'
+class Rectangle(Drawable): #was list
+    def __init__(self,startArrow=None,width=None,height=None,gerberLayer=None,apertureNumber=None,bottomLeft=None,topRight=None,rectangle=None):
+        if rectangle is not None:
+            self.startArrow = rectangle.startArrow
+            self.width = rectangle.width
+            self.height = rectangle.height
+        elif type(bottomLeft) is type(None):
+            self.startArrow = startArrow
+            self.width = width
+            self.height = height
+        else:
+            self.startArrow = Arrow(bottomLeft,E)
+            self.width = topRight[0]-bottomLeft[0]
+            self.height = topRight[1]-bottomLeft[1]
         self.apertureNumber = apertureNumber
-        self.width = width
-        self.height = height
-    def draw(self,gerberLayer,apertureNumber=None):
-        if apertureNumber == None:
-            apertureNumber = self.apertureNumber
-        gerberLayer.addOutline([Stroke(self.startArrow.origin), \
-                                Stroke(self.startArrow.along(self.width)),  \
-                                Stroke(self.startArrow.alongArrow(self.width).left(self.height)), \
-                                Stroke(self.startArrow.left(self.height))],apertureNumber)
-                                
-class Square(list):
-    def __init__(self,center=None,width=None):
-        self.width = width
-        self.center = center
-    def draw(self,gerberLayer):
-        outline = []
-        for cornerCoordinates in (numpy.array([[-1,-1],[-1,1],[1,1],[1,-1]])*(self.width/2)+self.center).tolist():
-            outline += [Stroke(cornerCoordinates)]
-        gerberLayer.addOutline(outline)
+        self.gerberLayer = gerberLayer
+    
+    def outset(self,clearance):
+        outsetVector = Vector([clearance,clearance])
+        return Rectangle(bottomLeft=self.bottomLeft-outsetVector,topRight=self.topRight+outsetVector)
+    def outline(self):
+        return ClosedStrokeContour([self.bottomLeft,self.bottomRight,self.topRight,self.topLeft])
+    def rectangularHull(self):
+        return self.outline().rectangularHull()
+        
+    @property
+    def bottomLeftArrow(self):
+        return self.startArrow
+    @property 
+    def bottomLeft(self):
+        return self.bottomLeftArrow.origin
 
-class Trace(list):
-    def __init__(self,startArrow,width=None):
-        super(Trace,self).__init__()
-        self.startArrow = startArrow
-        self.width = width
+    @property
+    def bottomRightArrow(self):
+        return self.startArrow.alongArrow(self.width).turnedLeft()
+    @property 
+    def bottomRight(self):
+        return self.bottomRightArrow.origin
         
-    def append(self,newPath):
-        super(Trace,self).append(newPath)
-        self.propagateArrows()
-    def insert(self,index,newPath):
-        super(Trace,self).insert(index,newPath)
-        for (path,followingPath) in zip(self[index::-1],self[index+1:0:-1]):
-            path.endArrow = followingPath.startArrow
-        self.startArrow = self[0].startArrow
+    @property
+    def topRightArrow(self):
+        return self.bottomRightArrow.alongArrow(self.height).turnedLeft()
+    @property 
+    def topRight(self):
+        return self.topRightArrow.origin
         
-    def propagateArrows(self):
-        startArrow = self.startArrow
-        for path in self:
-            path.startArrow = startArrow
-            startArrow = path.endArrow
+    @property
+    def topLeftArrow(self):
+        return self.topRightArrow.alongArrow(self.width).turnedLeft()
+    @property 
+    def topLeft(self):
+        return self.topLeftArrow.origin
         
+    def draw(self):
+        self.gerberLayer.addOutline(self.outline(),self.apertureNumber)
+                                
+class Square(Rectangle):
+    def __init__(self,center=None,centerArrow=None,width=None):
+        if not centerArrow:
+            centerArrow = Arrow(center,E)
+        startArrow = centerArrow.alongArrow(-0.5*width).outsetArrow(0.5*width)
+        
+        Rectangle.__init__(self,startArrow,width,width)
+            
+        
+class Circle(Drawable):
+    def __init__(self,center=None,diameter=None,gerberLayer=None):
+        self.center = center
+        self.diameter = diameter
+        self.gerberLayer = gerberLayer
+    def draw(self):
+        self._drawToLayer(self.gerberLayer)    
+    def outset(self,clearance):
+        return Circle(self.center,self.diameter+2.*clearance)
+    def rectangularHull(self):
+        cornerVector = Vector([0.5,0.5])*self.diameter
+        return Rectangle(bottomLeft=self.center-cornerVector,topRight=self.center+cornerVector)
+    def translate(self,translationVector):
+        self.center += translationVector
+    
+    
+    #TODO: factor this out
+    def _drawToLayer(self,gerberLayer):
+        apertureNumber = gerberLayer.gerberFile.addCircularAperture(self.diameter)
+        gerberLayer.flashAperture(self.center,apertureNumber)
+
+
+
+
+
+class CompositeCurve(RotatableList,Path):
+    '''
+    Curve that may consist of LineSegments, Bends and Turns. Start and end
+    arrows of segments do not necessarily kiss.
+    '''
     @property
     def endArrow(self):
         return self[-1].endArrow
+     
     @property
     def length(self):
         accumulatedLength = 0.
@@ -395,6 +587,67 @@ class Trace(list):
     def paint(self,gerberLayer,width):
         for path in self:
             path.paint(gerberLayer,width)
+
+
+
+class Trace(CompositeCurve):
+    '''
+    Consists of LineSegments and Bends, start and end arrows automatically kiss.
+    '''
+    def __init__(self,startArrow,width=None):
+        super(Trace,self).__init__()
+        self.startArrow = startArrow
+        self.width = width
+        
+    def append(self,newPath):
+        super(Trace,self).append(newPath)
+        self.propagateArrows()
+    def insert(self,index,newPath):
+        super(Trace,self).insert(index,newPath)
+        for (path,followingPath) in zip(self[index::-1],self[index+1:0:-1]):
+            path.endArrow = followingPath.startArrow
+        self.startArrow = self[0].startArrow
+        
+    def propagateArrows(self):
+        startArrow = self.startArrow
+        for path in self:
+            path.startArrow = startArrow
+            startArrow = path.endArrow
+         
+class LineList(CompositeCurve):
+    '''
+    Contains only LineSegments, that must not kiss.
+    '''
+    @property
+    def startArrow(self):
+        return self[0].startArrow   
+    
+    def outsetLocations(self,clearance):
+        outsetLines = RotatableList()
+        for lineSegment in self:
+            outsetLines.append(ALine(arrow=lineSegment.startArrow.outsetArrow(clearance)))
+        locations = RotatableList()
+        for (previousLine,currentLine) in zip(outsetLines >> 1,outsetLines):
+            locations.append(previousLine.crossing(currentLine))
+        return locations
+
+class MicrostripTrace(CompositeCurve):
+    def __init__(self,segments,traceWidth,face):
+        self.traceWidth = traceWidth
+        self.face = face
+        CompositeCurve.__init__(self,segments)
+    def rectangularHull(self):
+        #TODO: fix this
+        return Rectangle(self[0].startArrow,0,0)
+    def translate(self,translationVector):
+        for segment in self:
+            segment.startArrow = segment.startArrow.translated(translationVector)
+        
+    def draw(self):
+        for segment in self:
+            copperOutline = segment.outline(self.traceWidth)
+            copperOutline.drawToFace(self.face,isolation=None)
+            copperOutline.outset(self.traceWidth).draw(self.face.solderMask[10])
 
 class CoplanarTrace(Trace):
     @classmethod
@@ -445,14 +698,56 @@ class CoplanarTrace(Trace):
                     drillFile.addHole(Hole(leftRight[1],self.viaDiameter),fixed=False)
                 
         
-#         self.append(Line(self.gap))
-#         self.insert(0,Line(self.gap))
+#         self.append(LineSegment(self.gap))
+#         self.insert(0,LineSegment(self.gap))
         self.paint(conductorFile[1],self.width+2*self.gap)
         
         if solderMaskFile:
-#             self.append(Line(2.*self.viaClearance))
-#             self.insert(0,Line(2.*self.viaClearance))
+#             self.append(LineSegment(2.*self.viaClearance))
+#             self.insert(0,LineSegment(2.*self.viaClearance))
             self.paint(solderMaskFile[0],self.width+self.solderMaskClearance)
+
+
+
+class Pad(Drawable):
+    def rectangularHull(self):
+        return self.primitive.rectangularHull()
+    def translate(self,translationVector):
+        self.primitive.translate(translationVector)
+    # TODO: factor in below copy-pastism
+
+class CirclePad(Pad):
+    def __init__(self,primitive,face,isolation=0.,solderMask=False):
+        self.primitive = primitive
+        self.face = face
+        self.isolation = isolation
+        self.solderMask = solderMask
+    def draw(self):
+        self.primitive._drawToLayer(self.face.copper[20])
+        if self.isolation == None:
+            self.isolation = self.face.stack.classification.minimumOuterPadToPad
+        if self.isolation > 0.:
+            self.primitive.outset(self.isolation)._drawToLayer(self.face.copper[11])
+        if self.solderMask:
+            self.primitive.outset(self.face.stack.classification.solderMaskMisalignment)._drawToLayer(self.face.solderMask[10])
+
+class RectanglePad(Pad):
+    def __init__(self,primitive,face,isolation=0.,solderMask=False):
+        self.primitive = primitive
+        self.face = face
+        self.isolation = isolation
+        self.solderMask = solderMask
+    def draw(self):
+        outline = self.primitive.outline()
+        outline.draw(self.face.copper[20])
+        if self.isolation == None:
+            self.isolation = self.face.stack.classification.minimumOuterPadToPad
+        if self.isolation > 0.:
+            outline.outset(self.isolation).draw(self.face.copper[11])
+        if self.solderMask:
+            outline.outset(self.face.stack.classification.solderMaskMisalignment).draw(self.face.solderMask[10])
+
+        
 
 class Sma(object):
     # TODO: refactor as End
@@ -470,7 +765,7 @@ class Sma(object):
     
     @classmethod
     def addStub(cls,trace,atBeginning=False):
-        trace.append(Line(cls.tabLengthTop))
+        trace.append(LineSegment(cls.tabLengthTop))
         if atBeginning:
             trace.viaStartOffset = mil(25)
         else:
@@ -482,77 +777,77 @@ class Sma(object):
     
     def draw(self,topFile,solderMaskTop,solderMaskBottom=None):
         def drawMask(gerberFile,length):
-            topMask = Line(length,self.startArrow)
+            topMask = LineSegment(length,self.startArrow)
             topMask.paint(gerberFile[0],self.padWidth)
         
         drawMask(solderMaskTop,self.padLengthTop)
         if solderMaskBottom:
             drawMask(solderMaskBottom,self.padLengthBottom)
         
-        drop = Line(self.dropWidth,self.startArrow.alongArrow(self.pinLength+self.pinClearance))
+        drop = LineSegment(self.dropWidth,self.startArrow.alongArrow(self.pinLength+self.pinClearance))
         drop.paint(solderMaskTop[1],self.trace.width+self.trace.gap)
         
-        pullBack = Line(self.gapLength,self.startArrow)
+        pullBack = LineSegment(self.gapLength,self.startArrow)
         pullBack.paint(topFile[3],self.trace.width+2*self.trace.gap)
 
 class Soic8(object):
     padWidth = 1.52
-    padHeight = 0.6 #TODO demo hack
+    padHeight = 0.6
     pitch = 1.27
     span = 5.52
     
     dropWidth = 0.35
     dropExcessHeight = 0.15
         
-    def __init__(self,origin=Location(0.,0.),padClearance=0.4,solderMaskClearance=.1):
-        self.origin = origin
+    def __init__(self,startArrow=Arrow(Location(0.,0.),E),padClearance=0.4,solderMaskClearance=.1):
+        self.startArrow = startArrow
         self.padClearance = padClearance
         self.solderMaskClearance = solderMaskClearance
     
     def padCentersAndArrows(self):
-        padCenters = []
-        padArrows = []
-        for (xCenter,padOffset,xArrowDirection) in zip(self.origin[0] + numpy.array([-self.span/2,self.span/2]), [Location(-self.padWidth/2,0),Location(+self.padWidth/2,0)], [-1.,1.]):
-            yCenters = self.origin[1] + 1.5*self.pitch + numpy.arange(0.0,-self.pitch*4,-self.pitch)
-            if xArrowDirection > 0.:
-                yCenters = yCenters[::-1]
-            
-            for yCenter in yCenters:
-                padCenter = Location(xCenter,yCenter)
-                padCenters.append(padCenter)
-                padArrows.append(Arrow(padCenter-padOffset,UnitVector(xArrowDirection,0.)))
-            
+        startTopLeft = self.startArrow.reversed().alongArrow(self.span/2-self.padWidth/2).outsetArrow(1.5*self.pitch)
+        startBottomRight =        self.startArrow.alongArrow(self.span/2-self.padWidth/2).outsetArrow(1.5*self.pitch)
+        padArrows = startTopLeft.repeatRight(-self.pitch,4) + startBottomRight.repeatRight(-self.pitch,4)        
+        padCenters = map(lambda arrow: arrow.along(self.padWidth/2),padArrows)            
         return (padCenters,padArrows)
+    
+    def endArrows(self):
+        return map(lambda padArrow: padArrow.alongArrow(self.padWidth),self.padCentersAndArrows()[1])
     
     def padTraces(self):
         for startArrow in self.padCentersAndArrows()[1]:
             newTrace = Trace(startArrow,self.padHeight)
-            newTrace.append(Line(self.padWidth))
+            newTrace.append(LineSegment(self.padWidth))
             yield newTrace
         
-    def draw(self,conductorFile=None,solderMaskFile=None):
-        if conductorFile:
-            traceLayer = conductorFile[2]    
-            traceAperture = conductorFile.addRectangularAperture(self.padWidth,self.padHeight)
-
-            clearanceLayer = conductorFile[1]    
-            clearanceAperture = conductorFile.addRectangularAperture(self.padWidth+2*self.padClearance,self.padHeight+2*self.padClearance)
-
-        if solderMaskFile:
-            solderMaskLayer = solderMaskFile[0]    
-            solderMaskClearanceAperture = solderMaskFile.addRectangularAperture(self.padWidth+2*self.solderMaskClearance,self.padHeight+2*self.solderMaskClearance)
-            solderMaskDropLayer = solderMaskFile[1] 
-            solderMaskDropAperture = solderMaskFile.addRectangularAperture(self.dropWidth,self.padHeight+2*self.dropExcessHeight)
-                
-        (centers,arrows) = self.padCentersAndArrows()
-        for (padCenter,arrow) in zip(centers,arrows):
-            if conductorFile:
-                traceLayer.flashAperture(padCenter,traceAperture)
-                clearanceLayer.flashAperture(padCenter,clearanceAperture)
+    def draw(self,face):
+        for trace in self.padTraces():
+            trace[0].paint(face.copper[10],self.padHeight)
+            solderMaskOutset = face.stack.classification.solderMaskMisalignment
+            trace[0].outline(self.padHeight).outset(solderMaskOutset).draw(face.solderMask[20])
             
-            if solderMaskFile:
-                solderMaskLayer.flashAperture(padCenter,solderMaskClearanceAperture)
-                solderMaskDropLayer.flashAperture(arrow.along(self.padWidth+self.dropWidth/2.),solderMaskDropAperture)
+#        if conductorFile:
+#            traceLayer = conductorFile[2]    
+#            traceAperture = conductorFile.addRectangularAperture(self.padWidth,self.padHeight)
+#
+#            clearanceLayer = conductorFile[1]    
+#            clearanceAperture = conductorFile.addRectangularAperture(self.padWidth+2*self.padClearance,self.padHeight+2*self.padClearance)
+#
+#        if solderMaskFile:
+#            solderMaskLayer = solderMaskFile[0]    
+#            solderMaskClearanceAperture = solderMaskFile.addRectangularAperture(self.padWidth+2*self.solderMaskClearance,self.padHeight+2*self.solderMaskClearance)
+#            solderMaskDropLayer = solderMaskFile[1] 
+#            solderMaskDropAperture = solderMaskFile.addRectangularAperture(self.dropWidth,self.padHeight+2*self.dropExcessHeight)
+#                
+#        (centers,arrows) = self.padCentersAndArrows()
+#        for (padCenter,arrow) in zip(centers,arrows):
+#            if conductorFile:
+#                traceLayer.flashAperture(padCenter,traceAperture)
+#                clearanceLayer.flashAperture(padCenter,clearanceAperture)
+#            
+#            if solderMaskFile:
+#                solderMaskLayer.flashAperture(padCenter,solderMaskClearanceAperture)
+#                solderMaskDropLayer.flashAperture(arrow.along(self.padWidth+self.dropWidth/2.),solderMaskDropAperture)
 
 class End(object):
     backViaOffset = 0.
@@ -581,8 +876,8 @@ class OpenEnd(End):
         return self.gap
     def draw(self,topLayerFile,solderMaskFile,holesFile):
         super(OpenEnd,self).draw(topLayerFile,solderMaskFile,holesFile)
-        Line(self.gap,self.startArrow).paint(topLayerFile[1],self.trace.width+self.trace.copperClearance)
-        Line(self.gap+2.*self.trace.viaClearance,self.startArrow).paint(solderMaskFile[0],self.trace.width+self.trace.solderMaskClearance)
+        LineSegment(self.gap,self.startArrow).paint(topLayerFile[1],self.trace.width+self.trace.copperClearance)
+        LineSegment(self.gap+2.*self.trace.viaClearance,self.startArrow).paint(solderMaskFile[0],self.trace.width+self.trace.solderMaskClearance)
         
 
 class ShortEnd(End):
@@ -593,7 +888,7 @@ class ShortEnd(End):
         return 0.
     def draw(self,topLayerFile,solderMaskFile,holesFile):
         super(ShortEnd,self).draw(topLayerFile,solderMaskFile,holesFile)
-        Line(2.*self.trace.viaClearance,self.startArrow).paint(solderMaskFile[0],self.trace.width+self.trace.solderMaskClearance)
+        LineSegment(2.*self.trace.viaClearance,self.startArrow).paint(solderMaskFile[0],self.trace.width+self.trace.solderMaskClearance)
         
 class ResistorEnd(End):
     # supposed that the trace width is compatible with the resistor
@@ -605,20 +900,31 @@ class ResistorEnd(End):
     def __init__(self,trace,atBeginning=False):
         super(ResistorEnd,self).__init__(trace,atBeginning)
         assert not(atBeginning)
-        trace.append(Line(self.padLength))
+        trace.append(LineSegment(self.padLength))
     @property
     def length(self):
         return self.gapLength + 2*self.padLength
     def draw(self,topLayerFile,solderMaskFile,holesFile):
         super(ResistorEnd,self).draw(topLayerFile,solderMaskFile,holesFile)
-        Line(self.padLength+self.gapLength,self.startArrow).paint(topLayerFile[1],self.trace.width+self.trace.copperClearance)
-        firstSolderMask = Line(self.padLength+self.gapLength/2.,self.startArrow)
+        LineSegment(self.padLength+self.gapLength,self.startArrow).paint(topLayerFile[1],self.trace.width+self.trace.copperClearance)
+        firstSolderMask = LineSegment(self.padLength+self.gapLength/2.,self.startArrow)
         firstSolderMask.paint(solderMaskFile[0],self.trace.width+self.trace.solderMaskClearance)
-        secondSolderMask = Line(self.gapLength/2.+self.padLength,firstSolderMask.endArrow)
+        secondSolderMask = LineSegment(self.gapLength/2.+self.padLength,firstSolderMask.endArrow)
         secondSolderMask.paint(solderMaskFile[0],self.trace.width+self.trace.copperClearance/2.)
         
-        Line(self.dropLength,self.startArrow.reversed()).paint(solderMaskFile[1],self.trace.width+self.trace.copperClearance/2.)
-        
+        LineSegment(self.dropLength,self.startArrow.reversed()).paint(solderMaskFile[1],self.trace.width+self.trace.copperClearance/2.)
+
+class R0805ToGround:
+    padWidth = 1.2
+    padLength = 1.14
+    padGap = 0.76    
+    
+    def __init__(self,startArrow):
+        self.startArrow = startArrow
+    def draw(self,face):
+        Rectangle(self.startArrow,self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True,isolation=None)
+        Rectangle(self.startArrow.alongArrow(self.padLength+self.padGap),self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True)
+     
 # class SmaEnd(object):
 #     tabLengthTop = mil(179)
 #     tabLengthBottom = mil(65)
@@ -639,20 +945,20 @@ class ResistorEnd(End):
 #     def __init__(self,trace,atBeginning=False):
 #         super(SmaEnd,self).__init__(trace,atBeginning)
 #         if atBeginning:
-#             trace.insert(0,Line(self.padLength))
+#             trace.insert(0,LineSegment(self.padLength))
 #         else:
-#             trace.append(Line(self.padLength))
+#             trace.append(LineSegment(self.padLength))
 #     
 #     def draw(self,solderMaskTop,solderMaskBottom=None):
 #         def drawMask(gerberFile,length):
-#             topMask = Line(length,self.startArrow)
+#             topMask = LineSegment(length,self.startArrow)
 #             topMask.paint(gerberFile[0],self.padWidth)
 #         
 #         drawMask(solderMaskTop,self.padLengthTop)
 #         if solderMaskBottom:
 #             drawMask(solderMaskBottom,self.padLengthBottom)
 #         
-#         drop = Line(self.dropWidth,self.startArrow.alongArrow(self.pinLength+self.pinClearance))
+#         drop = LineSegment(self.dropWidth,self.startArrow.alongArrow(self.pinLength+self.pinClearance))
 #         drop.paint(solderMaskTop[1],self.trace.width+self.trace.gap)
          
 class StrokedOutline(RotatableList):
@@ -675,6 +981,8 @@ class StrokedOutline(RotatableList):
         stack.topFile[0].addOutline(self.strokes)
         groundFile[0].addOutline(self.strokes)
         stack.mechanical[0].addOutline(self.strokes,apertureNumber=stack.mechanicalAperture)
+    
+    #TODO rename to rectangularHull()
     @property
     def rectangle(self):
         (minimumX,minimumY,maximumX,maximumY) = (+numpy.inf,+numpy.inf,-numpy.inf,-numpy.inf)
@@ -701,12 +1009,11 @@ def soic8(soicLocation,angle=0.0):
                                                                                                                                                 
 if __name__ == '__main__':
     a = Arrow(Location(2,1),NE)
-    l = a.toLine()
     m = ALine(Vector([1,2,3]))
-#    trace = Trace(Arrow(Location(0.,0.),UnitVector(1.,0.)))
+#    trace = Trace(Arrow(Location(0.,0.),Direction(1.,0.)))
 #    trace.append(Bend(numpy.pi/2,1.))
-#    trace.append(Line(1.))
+#    trace.append(LineSegment(1.))
 #    trace.append(Bend(numpy.pi/2,-1.))
 #        
 #    alongArrow = trace.alongArrow(numpy.pi/2+1+numpy.pi/4)
-#    alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),UnitVector(1.,1.)))
+#    alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),Direction(1.,1.)))

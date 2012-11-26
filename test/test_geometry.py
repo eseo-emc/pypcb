@@ -13,13 +13,13 @@ class Location_test(unittest.TestCase):
 
 class UnitVector_test(unittest.TestCase):
     def setUp(self):
-        self.UnitVector = UnitVector(-3.,3.)
+        self.Direction = Direction(-3.,3.)
     def test_UnitVector(self):
-        self.UnitVector.assertAlmostEqual(numpy.array([-1/numpy.sqrt(2),+1/numpy.sqrt(2)]))
+        self.Direction.assertAlmostEqual(numpy.array([-1/numpy.sqrt(2),+1/numpy.sqrt(2)]))
 
 class Arrow_test(unittest.TestCase):
     def setUp(self):
-        self.arrow = Arrow(Location(0.,1.),UnitVector(-1.,1.))
+        self.arrow = Arrow(Location(0.,1.),Direction(-1.,1.))
     def test_angle(self):
         self.assertAlmostEqual(self.arrow.angle(),0.75*numpy.pi)
     def test_along(self):
@@ -40,67 +40,74 @@ class Arrow_test(unittest.TestCase):
 
 class Line_test(unittest.TestCase):
     def setUp(self):
-        self.line = Line(startArrow=Arrow(Location(0.0,1.0),UnitVector(1.,1.)),length=3*numpy.sqrt(2.))
+        self.line = LineSegment(startArrow=Arrow(Location(0.0,1.0),Direction(1.,1.)),length=3*numpy.sqrt(2.))
     def test_lineEnd(self):
-        self.line.endArrow.assertAlmostEqual(Arrow(Location(3.,4.),UnitVector(1.,1.)))
+        self.line.endArrow.assertAlmostEqual(Arrow(Location(3.,4.),Direction(1.,1.)))
 
 class Trace_test(unittest.TestCase):
     def setUp(self):
-        self.trace = Trace(Arrow(Location(0.,0.),UnitVector(1.,0.)))
+        self.trace = Trace(Arrow(Location(0.,0.),Direction(1.,0.)))
         self.trace.append(Bend(numpy.pi/2,1.))
-        self.trace.append(Line(1.))
+        self.trace.append(LineSegment(1.))
         self.trace.append(Bend(numpy.pi/2,-1.))
     def test_end(self):
         endArrow = self.trace.endArrow
-        endArrow.assertAlmostEqual(Arrow(Location(2.,3.),UnitVector(1.,0.)))
+        endArrow.assertAlmostEqual(Arrow(Location(2.,3.),Direction(1.,0.)))
     def test_along(self):
         alongArrow = self.trace.alongArrow(numpy.pi/2)
-        alongArrow.assertAlmostEqual(Arrow(Location(1.,1.),UnitVector(0.,1.)))
+        alongArrow.assertAlmostEqual(Arrow(Location(1.,1.),Direction(0.,1.)))
     def test_along2(self):
         alongArrow = self.trace.alongArrow(numpy.pi/2+1+numpy.pi/4)
-        alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),UnitVector(1.,1.)))
+        alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),Direction(1.,1.)))
     def test_insert(self):
-        trace = Trace(Arrow(Location(2.,0.),UnitVector(0.,-1.)))
-        trace.append(Line(1.))
+        trace = Trace(Arrow(Location(2.,0.),Direction(0.,-1.)))
+        trace.append(LineSegment(1.))
         
         trace.insert(0,Bend(numpy.pi/2,-1))
-        trace.startArrow.assertAlmostEqual(Arrow(Location(1.,1.),UnitVector(1.,0.)))
-        trace.insert(0,Line(1.))
-        trace.startArrow.assertAlmostEqual(Arrow(Location(0.,1.),UnitVector(1.,0.)))
+        trace.startArrow.assertAlmostEqual(Arrow(Location(1.,1.),Direction(1.,0.)))
+        trace.insert(0,LineSegment(1.))
+        trace.startArrow.assertAlmostEqual(Arrow(Location(0.,1.),Direction(1.,0.)))
     def test_insert2(self):
-        trace = Trace(Arrow(Location(2.,0.),UnitVector(0.,-1)))
-        trace.append(Line(0.5))
+        trace = Trace(Arrow(Location(2.,0.),Direction(0.,-1)))
+        trace.append(LineSegment(0.5))
         trace.append(Bend(numpy.pi/2,1.))
-        trace.append(Line(1.0))
-        trace.endArrow.assertAlmostEqual(Arrow(Location(4.0,-1.5),UnitVector(1.,0.)))
+        trace.append(LineSegment(1.0))
+        trace.endArrow.assertAlmostEqual(Arrow(Location(4.0,-1.5),Direction(1.,0.)))
         
         trace.insert(2,Bend(numpy.pi/2,-1.))
-        trace.startArrow.assertAlmostEqual(Arrow(Location(0.5,-3.5),UnitVector(1.,0.)))
-        trace.insert(2,Line(1.))
-        trace.startArrow.assertAlmostEqual(Arrow(Location(0.5,-4.5),UnitVector(1.,0.)))
+        trace.startArrow.assertAlmostEqual(Arrow(Location(0.5,-3.5),Direction(1.,0.)))
+        trace.insert(2,LineSegment(1.))
+        trace.startArrow.assertAlmostEqual(Arrow(Location(0.5,-4.5),Direction(1.,0.)))
         
 
 
 class Bend_test(unittest.TestCase):
     def setUp(self):
-        self.bend = Bend(startArrow=Arrow(Location(0.,0.),UnitVector(1.,0.)), length=numpy.pi*20./2, bendRadius=20.)
+        self.bend = Bend(startArrow=Arrow(Location(0.,0.),Direction(1.,0.)), length=numpy.pi*20./2, bendRadius=20.)
     
     def test_origin(self):
         self.bend.absoluteOrigin().assertAlmostEqual(Location(0.,20.))
         
     def test_endBow(self):
         theEnd = self.bend.endArrow
-        theEnd.assertAlmostEqual(Arrow(Location(20.,20.),UnitVector(0.,1.)))
+        theEnd.assertAlmostEqual(Arrow(Location(20.,20.),Direction(0.,1.)))
         
     def test_endBowClockWise(self):
-        bend = Bend(startArrow=Arrow(Location(0.,0.),UnitVector(1.,0.)), length=numpy.pi*20./2, bendRadius=-20.)
+        bend = Bend(startArrow=Arrow(Location(0.,0.),Direction(1.,0.)), length=numpy.pi*20./2, bendRadius=-20.)
         theEnd = bend.endArrow
-        theEnd.assertAlmostEqual(Arrow(Location(20.,-20.),UnitVector(0.,-1.)))
+        theEnd.assertAlmostEqual(Arrow(Location(20.,-20.),Direction(0.,-1.)))
 
     def test_endBowLeft(self):
-        bend = Bend(startArrow=Arrow(Location(0.,0.),UnitVector(-1.,0.)), length=numpy.pi*20./2, bendRadius=20.)
+        bend = Bend(startArrow=Arrow(Location(0.,0.),Direction(-1.,0.)), length=numpy.pi*20./2, bendRadius=20.)
         theEnd = bend.endArrow
-        theEnd.assertAlmostEqual(Arrow(Location(-20.,-20.),UnitVector(0.,-1.)))
+        theEnd.assertAlmostEqual(Arrow(Location(-20.,-20.),Direction(0.,-1.)))
+
+class Rectangle_test(unittest.TestCase):
+    def setUp(self):
+        self.rectangle = Rectangle(bottomLeft=Location(1,3),topRight=Location(4,5))
+    def test_loopThrough(self):
+        self.rectangle.bottomLeft.assertAlmostEqual(Location(1,3))
+        self.rectangle.topRight.assertAlmostEqual(Location(4,5))
 
 if __name__ == '__main__':
     import nose
