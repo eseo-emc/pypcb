@@ -1,5 +1,5 @@
 import numpy
-import copy
+from copy import copy
 
 from lazy import *
 
@@ -9,13 +9,25 @@ def m(lengthInMeters):
     return lengthInMeters*1000.
 def mil(lengthInMil):
     return lengthInMil*0.0254
+def indentLines(lines):
+    indentedLines = ''
+    for line in lines.splitlines():
+        indentedLines += '  '+line+'\n'
+    return indentedLines
+def indentItems(items):
+    constituentString = ''
+    for constituent in items:
+        constituentString += indentLines(str(constituent))
+    return constituentString
 
-
-    
-def assertScalarAlmostEqual(first,second,margin=1e-6):
-    assert numpy.linalg.norm(first-second) < margin, '{first} is not almost {second}'.format(first=first,second=second)
+def almostEqual(first,second,margin=1e-6):
+    return numpy.linalg.norm(first-second) < margin
+def assertAlmostEqual(first,second,margin=1e-6):
+    assert almostEqual(first,second,margin), '{first} is not almost {second}'.format(first=first,second=second)
 
 class DrawGroup(list):
+    def __str__(self):
+        return '{className}()\n{constituents}'.format(className=self.__class__.__name__,constituents=indentItems(self))
     def draw(self):
         for drawable in self:
             drawable.draw()
@@ -27,8 +39,8 @@ class DrawGroup(list):
         topRight = Location(-numpy.inf,-numpy.inf)
         for drawable in self:
             drawableRectangle = drawable.rectangularHull()
-            bottomLeft = numpy.min([drawableRectangle.bottomLeft, bottomLeft],0)
-            topRight =   numpy.max([drawableRectangle.topRight,   topRight],0)
+            bottomLeft = Location(numpy.min([drawableRectangle.bottomLeft, bottomLeft],0))
+            topRight =   Location(numpy.max([drawableRectangle.topRight,   topRight],0))
         return Rectangle(bottomLeft=bottomLeft,topRight=topRight)
         
     @property
@@ -37,8 +49,15 @@ class DrawGroup(list):
     @topRight.setter
     def topRight(self,newValue):
         self.translate(newValue-self.topRight)
-
+    @property
+    def bottomLeft(self):
+        return self.rectangularHull().bottomLeft
+    @bottomLeft.setter
+    def bottomLeft(self,newValue):
+        self.translate(newValue-self.bottomLeft)
 class Drawable(object):
+    def __str__(self):
+        return '{className}({startArrow})'.format(className=self.__class__.__name__,startArrow=self.startArrow)
     def rectangularHull(self):
         raise NotImplementedError
     def translate(self,translationVector):
@@ -50,12 +69,12 @@ class Hole(object):
     margin = 0.1
         
     def __init__(self,location,diameter,plated=True):
-        self.location = location
+        self.location = copy(location)
         self.diameter = diameter
         self.plated = plated
     def tooClose(self,other):
 #         margin = (self.diameter + other.diameter)/2 + .3+ 0.150
-        return other.location.approximately(self.location,self.margin)
+        return other.location.almostEqualTo(self.location,self.margin)
     def mergeInPlace(self,other):
         assert self.diameter == other.diameter
         assert self.plated == other.plated
@@ -106,7 +125,7 @@ class RotatableList(ApproximateList):
         if steps > 1:
             return (self >> (steps-1)) >> 1
         elif steps == 1:
-            return RotatableList([self[-1]] + self[:-1])
+            return self.__class__([self[-1]] + self[:-1])
         elif steps == 0:
             return self
         else:
@@ -115,7 +134,7 @@ class RotatableList(ApproximateList):
         if steps > 1:
             return (self << (steps-1)) << 1
         elif steps == 1:
-            return RotatableList(self[1:] + [self[0]])
+            return self.__class__(self[1:] + [self[0]])
         elif steps == 0:
             return self
         else:
@@ -130,9 +149,11 @@ class Vector(numpy.ndarray):
     def length(self):
         return numpy.linalg.norm(self)
     def assertAlmostEqual(self,other,margin=1e-6):
-        assert self.approximately(other,margin), '{self} is not almost {other}'.format(self=self,other=other)
-    def approximately(self,other,margin=1e-6):
+        assert self.almostEqualTo(other,margin), '{self} is not almost {other}'.format(self=self,other=other)
+    def almostEqualTo(self,other,margin=1e-6):
         return numpy.linalg.norm(self-other) < margin
+    def approximatelyGreaterOrEqualTo(self,other,margin=1e-6):
+        return self-other > -margin
 
 class PlaneVector(Vector):
     def __new__(cls,dx,dy=None):
@@ -140,15 +161,30 @@ class PlaneVector(Vector):
             dy=dx[1]
             dx=dx[0]
         return Vector.__new__(cls,[float(dx),float(dy)]) 
+    def orthogonal(self):
+        return Vector.__new__(self.__class__,numpy.dot(numpy.array([[0,1],[-1,0]]),self))
+    def __str__(self):
+        return '[{x:8.2f},{y:8.2f}]'.format(x=self[0],y=self[1])
 
+class LocationList(list):
+    def containsalmostEqualTo(self,candidate):
+        for point in self:
+            if point.almostEqualTo(candidate):
+                return True
+        return False
 
 class Location(PlaneVector):
     def __sub__(self,other):
         difference = numpy.ndarray.__sub__(self,other)
-        return PlaneVector(difference[0],difference[1])
+        if type(other) == Location:
+            return PlaneVector(difference[0],difference[1])
+        else:                
+            return Location(difference[0],difference[1])
     def __add__(self,other):
         sum = numpy.ndarray.__add__(self,other)
         return Location(sum[0],sum[1])
+    def belowAndLeftOf(self,other):
+        return (self[1] <= other[1]) and (self[0] <= other[0])
 
 
 class Direction(PlaneVector):
@@ -156,6 +192,14 @@ class Direction(PlaneVector):
         newVector = PlaneVector.__new__(cls,x,y)
         newVector /= newVector.length()
         return newVector
+    def __str__(self):
+        for nominalDirection in ['N','NW','W','SW','S','SE','E','NE']:
+            if self.almostEqualTo(eval(nominalDirection)):
+                return nominalDirection
+        else:
+            return super(self).__repr__()
+    def parallelWith(self,other):
+        return self.almostEqualTo(other) or self.almostEqualTo(-1*other)
     def angle(self):
         return numpy.arctan2(self[1],self[0])
 N  = Direction(0,1)
@@ -182,13 +226,15 @@ class Angle(Convertible):
         return self.essence()
 
 class ALine(Convertible):  
-    # essence  
+    # essence in format ax + by + c = 0
     def normalise(self,rawEssence):
         return rawEssence/rawEssence.length()
     def coordinates(self):        
         return self.essence()
     def __str__(self):
         return 'ALine({coordinates})'.format(coordinates=self.coordinates())
+    def __eq__(self,other):
+        return almostEqual(self.essence(),other.essence())
             
     # derived
     @converter
@@ -212,28 +258,38 @@ class ALine(Convertible):
     def arrowToEssence(self,arrow):
         origin = arrow.origin
         slope = numpy.tan(arrow.direction.angle())
-        return self.normalise(Vector([slope,-1,origin[1]-slope*origin[0]]))
+        return (Vector([slope,-1,origin[1]-slope*origin[0]]))
         
-    # intelligence
-    def crossing(self,other):
-        equations = numpy.array((self.coordinates(),other.coordinates()))
-        crossing = Location(numpy.linalg.solve(equations[:,:2],-1*equations[:,2]))
-        return crossing
-
-    
+    def direction(self):
+        return Direction(-1*self.essence()[1],self.essence()[0])
+    def intersection(self,other):
+        if self == other:
+            raise ValueError, 'Both lines coincide'
+        elif self.direction().parallelWith(other.direction()):
+            return None
+        else:
+            equations = numpy.array((self.coordinates(),other.coordinates()))
+            try:
+                crossing = Location(numpy.linalg.solve(equations[:,:2],-1*equations[:,2]))
+            except numpy.linalg.linalg.LinAlgError:
+                return None
+            except:
+                raise
+            else:
+                return crossing
 
 class Arrow(object):
     def __init__(self,origin,direction):
-        self.origin = origin
-        self.direction = direction
+        self.origin = copy(origin)
+        self.direction = copy(direction)
     def __repr__(self):
         return 'Arrow({origin},{direction})'.format(origin=self.origin,direction=self.direction)
     def __add__(self,vector):
         return Arrow(self.origin + vector,self.direction)
     def assertAlmostEqual(self,other,margin=1e-6):
-        assert self.approximately(other,margin), '{self} is not almost {other}'.format(self=self,other=other)
-    def approximately(self,other,margin=1e-6):
-        return self.origin.approximately(other.origin,margin) and self.direction.approximately(other.direction,margin)
+        assert self.almostEqualTo(other,margin), '{self} is not almost {other}'.format(self=self,other=other)
+    def almostEqualTo(self,other,margin=1e-6):
+        return self.origin.almostEqualTo(other.origin,margin) and self.direction.almostEqualTo(other.direction,margin)
         
     def angle(self):
         return Scalar(numpy.arctan2(self.direction[1],self.direction[0]))
@@ -280,23 +336,23 @@ class Arrow(object):
     def translated(self,translationVector):
         return Arrow(self.origin+translationVector,self.direction)
     
-    def crossing(self,other):
-        return ALine(arrow=self).crossing(ALine(arrow=other))
+    def intersection(self,other):
+        return ALine(arrow=self).intersection(ALine(arrow=other))
 
 ## Naked geometry
 class Segment(object):
     pass
 class Stroke(Segment):
     def __init__(self,targetLocation):
-        self.targetLocation = targetLocation
+        self.targetLocation = copy(targetLocation)
     def __repr__(self):
         return 'Stroke({location})'.format(location=self.targetLocation)
     def assertAlmostEqual(self,other):
         self.targetLocation.assertAlmostEqual(other.targetLocation)
 class Arc(Segment):
     def __init__(self,targetLocation,origin,counterClockWise):
-        self.targetLocation = targetLocation
-        self.origin = origin
+        self.targetLocation = copy(targetLocation)
+        self.origin = copy(origin)
         self.counterClockWise = counterClockWise
 class ClosedContour(RotatableList):
     def outset(self,outsetClearance):
@@ -336,17 +392,58 @@ class ClosedContour(RotatableList):
         return Rectangle(bottomLeft=Location(minimumX,minimumY),topRight=Location(maximumX,maximumY) )
 
 class ClosedStrokeContour(ClosedContour):
-    def __init__(self,locationList):
+    def __init__(self,strokeList):
         strokes = []
-        for location in locationList:
-            strokes += [Stroke(location)]
+        for stroke in strokeList:
+            if type(stroke) is Location: #TODO: remove ugly ambiguity
+                stroke = Stroke(stroke)
+            strokes += [stroke]
         ClosedContour.__init__(self,strokes)
+    def bottomLeftmostFirst(self):
+        bottomLeftmostIndex = 0
+        for (index,corner) in enumerate(self.corners()):
+            if corner.belowAndLeftOf(self.corners()[bottomLeftmostIndex]):
+                bottomLeftmostIndex = index
+        return self << bottomLeftmostIndex
+                
+    def __add__(self,other):
+        '''
+        "Algorithm of merging polygons", Kenneth Sloan in comp.graphics.algorithms
+        a) find a vertex which is guaranteed to be on the final perimeter (the 
+        lowest, leftmost point should do)
+        b) walk that polygon, looking for intersections - switch input polygons 
+        as needed at intersections
+        c) if there are still (disconnected) polygons - go to a)
+        '''
+        selfLines = self.bottomLeftmostFirst().lines()
+        otherLines = other.bottomLeftmostFirst().lines()
+        if otherLines[0].startPoint.belowAndLeftOf(selfLines[0].startPoint):
+            (selfLines,otherLines) = (otherLines,selfLines)
+            
+        jointContourPoints = LocationList([selfLines[0].startPoint])
+        while not(jointContourPoints[-1].almostEqualTo(jointContourPoints[0])) or len(jointContourPoints) == 1:
+            intersection = otherLines.firstIntersection(selfLines[0],jointContourPoints)
+            
+            if (type(intersection) is not type(None)):
+                (intersectionLocation,segmentIndex) = intersection
+                jointContourPoints.append(intersectionLocation)
+                otherLines = otherLines << segmentIndex
+                otherLines[0] = LineSegment(startEnd=(intersectionLocation,otherLines[0].endPoint))
+                otherLines += [LineSegment(startEnd=(otherLines[-1].endPoint,intersectionLocation))]
+                (selfLines,otherLines) = (otherLines,selfLines)
+            else:
+                jointContourPoints.append(selfLines[0].endPoint)
+                selfLines = selfLines << 1
+                
+        return ClosedStrokeContour(jointContourPoints[0:-1])
+            
+        
 
 
 ## Visible geometry
 class Path(object):
     def closed(self):
-        return self.endArrow.origin.approximately(self.startArrow.origin)
+        return self.endArrow.origin.almostEqualTo(self.startArrow.origin)
     def stamp(self,targetPitch,stampFunctionOfArrow,center=False):
         if center:
             offset = 0.5*targetPitch
@@ -362,7 +459,7 @@ class Path(object):
             stampFunctionOfArrow(self.alongArrow(length+offset))
 class Bend(Path):
     def __init__(self,length,bendRadius,startArrow=Arrow(Location(0.,0.),Direction(1.,0.))):
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
         self.length = length
         self.bendRadius = bendRadius
     def __repr__(self):
@@ -397,7 +494,7 @@ class Bend(Path):
 class MiteredBend(Path):
     def __init__(self,startArrow,width,thickness):
         '''http://www.microwaves101.com/encyclopedia/mitered_bends.cfm'''
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
         self.width = width
         self.thickness = thickness
     @property
@@ -434,14 +531,19 @@ class LeftMiteredBend(MiteredBend):
             [self.startArrow.alongArrow(self._straightExtension).left(self.width/2)])        
         
 class LineSegment(Path):
-    def __init__(self,length,startArrow=None):
-        self.startArrow = startArrow
-        self.length = length
+    def __init__(self,length=None,startArrow=None,startEnd=None):
+        if startEnd:
+            delta = startEnd[1]-startEnd[0]
+            self.startArrow = Arrow(startEnd[0],Direction(delta))
+            self.length = delta.length()
+        else:
+            self.startArrow = copy(startArrow)
+            self.length = length
     def __repr__(self):
         return 'LineSegment({length})'.format(length=self.length)
     def assertAlmostEqual(self,other):
         self.startArrow.assertAlmostEqual(other.startArrow)
-        assertScalarAlmostEqual(self.length,other.length)
+        assertAlmostEqual(self.length,other.length)
     @property
     def endArrow(self):
         return self.alongArrow(self.length)
@@ -449,9 +551,53 @@ class LineSegment(Path):
     def endArrow(self,newEndArrow):
         self.startArrow = newEndArrow.alongArrow(-self.length)
         self.endArrow.assertAlmostEqual(newEndArrow)
-    
+    @property
+    def endPoint(self):
+        return self.endArrow.origin
+    @property
+    def startPoint(self):
+        return self.startArrow.origin
     def reversed(self):
         return LineSegment(self.length,self.endArrow.reversed())
+    
+    def rectangle(self):
+        return Rectangle(bottomLeft=Location(numpy.min([self.startPoint,self.endPoint],0)),
+                         topRight=  Location(numpy.max([self.startPoint,self.endPoint],0)))
+    
+    def line(self):
+        return ALine(arrow=self.startArrow)
+    def pointOnSegmentLength(self,point):
+        homogeneousPoint = point-self.startArrow.origin
+        # is the homogeneous point a multiple of the direction vector?
+        (length,residue) = numpy.linalg.solve([self.startArrow.direction,self.startArrow.direction.orthogonal()],homogeneousPoint)
+        if almostEqual(residue,0.):
+            return length
+    def pointOnSegmentLengthTruncated(self,point):
+        length = self.pointOnSegmentLength(point)
+        if almostEqual(length,0.) or almostEqual(length,self.length) or (0 < length < self.length):
+            return length
+    def pointOnSegmentLengthClipped(self,point):
+        return max(0.,min(self.length,self.pointOnSegmentLength(point)))
+    def pointOnSegment(self,point):
+        return self.pointOnSegmentLengthTruncated(point) is not None
+            
+    def intersection(self,other):
+        selfLine = self.line()
+        otherLine = other.line()
+        if selfLine == otherLine:
+            if not(almostEqual(self.startArrow.direction,other.startArrow.direction)):
+                other = other.reversed()
+            startLength = self.pointOnSegmentLengthClipped(other.startPoint)
+            endLength = self.pointOnSegmentLengthClipped(other.endPoint)
+            if not(startLength == endLength):
+                return LineSegment(endLength-startLength,self.startArrow.alongArrow(startLength))
+        else:
+            lineIntersection = selfLine.intersection(otherLine)
+            if type(lineIntersection) is not type(None):
+                if self.pointOnSegment(lineIntersection) and other.pointOnSegment(lineIntersection):
+                    return lineIntersection
+            
+        
     
     def alongArrow(self,length):
         return self.startArrow.alongArrow(length)
@@ -470,11 +616,11 @@ class LineSegment(Path):
 class Rectangle(Drawable): #was list
     def __init__(self,startArrow=None,width=None,height=None,gerberLayer=None,apertureNumber=None,bottomLeft=None,topRight=None,rectangle=None):
         if rectangle is not None:
-            self.startArrow = rectangle.startArrow
+            self.startArrow = copy(rectangle.startArrow)
             self.width = rectangle.width
             self.height = rectangle.height
         elif type(bottomLeft) is type(None):
-            self.startArrow = startArrow
+            self.startArrow = copy(startArrow)
             self.width = width
             self.height = height
         else:
@@ -519,7 +665,10 @@ class Rectangle(Drawable): #was list
     @property 
     def topLeft(self):
         return self.topLeftArrow.origin
-        
+      
+    def pointInRectangle(self,point):
+        return point.approximatelyGreaterOrEqualTo(self.bottomLeft).all() and self.topRight.approximatelyGreaterOrEqualTo(point).all()
+      
     def draw(self):
         self.gerberLayer.addOutline(self.outline(),self.apertureNumber)
                                 
@@ -534,9 +683,12 @@ class Square(Rectangle):
         
 class Circle(Drawable):
     def __init__(self,center=None,diameter=None,gerberLayer=None):
-        self.center = center
+        self.center = copy(center)
         self.diameter = diameter
         self.gerberLayer = gerberLayer
+    def __str__(self):
+        return '{className}({center},{diameter:.2f})\t{layer}'.format(className=self.__class__.__name__,center=self.center,diameter=self.diameter,layer=repr(self.gerberLayer))
+
     def draw(self):
         self._drawToLayer(self.gerberLayer)    
     def outset(self,clearance):
@@ -596,7 +748,7 @@ class Trace(CompositeCurve):
     '''
     def __init__(self,startArrow,width=None):
         super(Trace,self).__init__()
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
         self.width = width
         
     def append(self,newPath):
@@ -611,7 +763,7 @@ class Trace(CompositeCurve):
     def propagateArrows(self):
         startArrow = self.startArrow
         for path in self:
-            path.startArrow = startArrow
+            path.startArrow = copy(startArrow)
             startArrow = path.endArrow
          
 class LineList(CompositeCurve):
@@ -628,14 +780,35 @@ class LineList(CompositeCurve):
             outsetLines.append(ALine(arrow=lineSegment.startArrow.outsetArrow(clearance)))
         locations = RotatableList()
         for (previousLine,currentLine) in zip(outsetLines >> 1,outsetLines):
-            locations.append(previousLine.crossing(currentLine))
+            locations.append(previousLine.intersection(currentLine))
         return locations
+    
+    def firstIntersection(self,lineSegment,skipIntersections=None):
+        if skipIntersections is None:
+            skipIntersections = LocationList()
+        intersectionLocations = []
+        segmentIndices = []
+        for (selfIndex,selfSegment) in enumerate(self):
+            intersection = selfSegment.intersection(lineSegment)
+            if (type(intersection) is not type(None)) and not(skipIntersections.containsalmostEqualTo(intersection)):
+                intersectionLocations += [intersection]
+                segmentIndices += [selfIndex]
+        if intersectionLocations:
+            distances = map(lambda location: (location-lineSegment.startPoint).length(),intersectionLocations)
+            minimumIndex = numpy.argmin(numpy.array(distances))
+            return (intersectionLocations[minimumIndex],segmentIndices[minimumIndex])
 
 class MicrostripTrace(CompositeCurve):
     def __init__(self,segments,traceWidth,face):
         self.traceWidth = traceWidth
         self.face = face
         CompositeCurve.__init__(self,segments)
+    @property
+    def startArrow(self):
+        return self[0].startArrow  
+    def __str__(self):
+        return '{className}({startArrow})\n{constituents}'.format(className=self.__class__.__name__,startArrow=self.startArrow,constituents=indentItems(self))
+
     def rectangularHull(self):
         #TODO: fix this
         return Rectangle(self[0].startArrow,0,0)
@@ -710,6 +883,9 @@ class CoplanarTrace(Trace):
 
 
 class Pad(Drawable):
+    def __str__(self):
+        return '{className}({primitive})'.format(className=self.__class__.__name__,primitive=self.primitive)
+
     def rectangularHull(self):
         return self.primitive.rectangularHull()
     def translate(self,translationVector):
@@ -772,7 +948,7 @@ class Sma(object):
             trace.viaEndOffset = mil(25)
         
     def __init__(self,startArrow,trace):
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
         self.trace = trace
     
     def draw(self,topFile,solderMaskTop,solderMaskBottom=None):
@@ -800,7 +976,7 @@ class Soic8(object):
     dropExcessHeight = 0.15
         
     def __init__(self,startArrow=Arrow(Location(0.,0.),E),padClearance=0.4,solderMaskClearance=.1):
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
         self.padClearance = padClearance
         self.solderMaskClearance = solderMaskClearance
     
@@ -920,7 +1096,7 @@ class R0805ToGround:
     padGap = 0.76    
     
     def __init__(self,startArrow):
-        self.startArrow = startArrow
+        self.startArrow = copy(startArrow)
     def draw(self,face):
         Rectangle(self.startArrow,self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True,isolation=None)
         Rectangle(self.startArrow.alongArrow(self.padLength+self.padGap),self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True)
@@ -1005,15 +1181,23 @@ def soic8(soicLocation,angle=0.0):
         trace.append(Bend(bendLength,bendRadius))
                 
         trace.draw(stack.topFile,stack.topSolderMask, stack.stack.drillFile, drillLeftSkip, drillRightSkip)
-
-                                                                                                                                                
 if __name__ == '__main__':
-    a = Arrow(Location(2,1),NE)
-    m = ALine(Vector([1,2,3]))
+#    a = Arrow(Location(2,1),NE)
+#    m = ALine(Vector([1,2,3]))
 #    trace = Trace(Arrow(Location(0.,0.),Direction(1.,0.)))
 #    trace.append(Bend(numpy.pi/2,1.))
 #    trace.append(LineSegment(1.))
 #    trace.append(Bend(numpy.pi/2,-1.))
 #        
-#    alongArrow = trace.alongArrow(numpy.pi/2+1+numpy.pi/4)
-#    alongArrow.assertAlmostEqual(Arrow(Location(2.-1./numpy.sqrt(2),2.+1./numpy.sqrt(2)),Direction(1.,1.)))
+#    largeOutline = Rectangle(Arrow(Location(0,0),E),4,4).outline()
+#    smallOutline = Rectangle(Arrow(Location(1.5,+.5),S),2,2).outline()
+#    join = smallOutline + largeOutline
+#    rectangleLines = Rectangle(Arrow(Location(1,1),S),2,2).outline().lines()
+#    cuttingLineSegment = LineSegment(4,Arrow(Location(4,0),W))
+#    reverse =cuttingLineSegment.reversed()
+#    intersection = rectangleLines.firstIntersection(reverse)
+#    intersection[0].assertAlmostEqual(Location(1,0))
+    lineAtYOne = ALine(Vector([ -1.22464680e-16,  -1.00000000e+00,   1.00000000e+00]))
+    lineAtYZero = ALine(Vector([ 0., -1.,  0.]))
+    lineAtYOne.intersection(lineAtYZero)
+#    assertEqual(intersection[1],0)

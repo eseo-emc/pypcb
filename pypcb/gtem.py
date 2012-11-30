@@ -1,6 +1,7 @@
 # -*- coding: windows-1252 -*-
 from geometry import *
 from stroketext import *
+from copy import deepcopy
 
 lightSpeed = 2.99792458e8*1e3 #mm/s
 
@@ -25,8 +26,7 @@ class GtemCard():
         
         for face in stack:
             Rectangle(rectangle=self.groundPlane,gerberLayer=face.copper[0]).draw()
-        Rectangle(rectangle=self.groundPlane,gerberLayer=stack.mechanical[0],apertureNumber = stack.mechanicalAperture).draw()
- 
+         
         bottomCornerHeight = 6.0
         Rectangle(rectangle=self.groundPlane,gerberLayer = stack[3].solderMask[0]).draw()
 
@@ -213,9 +213,9 @@ class MolexSmdSma(DrawGroup):
             groundCopperPad = Square(centerArrow=side.startArrow, width=self.groundPadSize)
             groundPad = RectanglePad(groundCopperPad,self.face,solderMask = True)
             self.append(groundPad)
-            signalCopperPad = Circle(self.startArrow.origin,self.centerPadSize)
-            signalPad = CirclePad(signalCopperPad,self.face,solderMask = True,isolation=None)
-            self.append(signalPad)
+        signalCopperPad = Circle(self.startArrow.origin,self.centerPadSize)
+        signalPad = CirclePad(signalCopperPad,self.face,solderMask = True,isolation=None)
+        self.append(signalPad)
 
 class AgilentProbePads(object):
     groundRecess = 0.49
@@ -239,7 +239,7 @@ class RingResonator(DrawGroup):
     connectorClass = MolexSmdSma
     
     def __init__(self,face,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startArrow=Arrow(Location(0,0),E)):
-        self.startArrow = startArrow
+        self.startArrow = deepcopy(startArrow)
         self.face = face
         self.firstResonanceFrequency = firstResonanceFrequency
         self.traceWidth = traceWidth

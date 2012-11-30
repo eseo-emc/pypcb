@@ -32,6 +32,8 @@ class StrokeText(Drawable):
         self.height = height
         self.align = align
         self.mirrored = mirrored
+    def __str__(self):
+        return '{className}({startArrow},"{text}")'.format(className=self.__class__.__name__,startArrow=self.startArrow,text=self.textString)
     def draw(self):
         strokes = font.stringStrokes(self.textString)
         strokes = strokes - (self.align+1)*numpy.array([float(len(self.textString))/2.,0])

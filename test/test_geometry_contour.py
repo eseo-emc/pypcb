@@ -19,7 +19,7 @@ class ArrowTest(unittest.TestCase):
         arrow1 = Arrow(Location(0,0),E)
         arrow2 = Arrow(Location(1,1),NW)       
         
-        arrow1.crossing(arrow2).assertAlmostEqual(Location(2,0))
+        arrow1.intersection(arrow2).assertAlmostEqual(Location(2,0))
         
 
 class ContourTest(unittest.TestCase):

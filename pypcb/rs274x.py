@@ -8,6 +8,8 @@ class GerberLayer(object):
         self.gerberFile = gerberFile
         self.inverted = inverted
         self.drawCommands = ''
+    def __repr__(self):
+        return ('-' if self.inverted else '+') + ' ' + repr(self.gerberFile)
     def __str__(self):
         return self.layerPolarity()+self.drawCommands
     def layerPolarity(self):
@@ -75,6 +77,8 @@ class GerberFile(object):
         self.layers = []
         self.addLayer()
         self.apertures = {}
+    def __repr__(self):
+        return self.name
     def addLayer(self,inverted=False):
         newLayer = GerberLayer(self,inverted)
         self.layers.append(newLayer)

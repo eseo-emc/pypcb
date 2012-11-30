@@ -68,7 +68,6 @@ HSensor(bottomCenterArrow.alongArrow(+30),stack[-1]).draw()
 drawTrace(longLength,bottomCenterArrow.alongArrow(-longLength),stack[1])
 
 # Ring resonators
-
 class Resonator(DrawGroup):
     margin = 5.0
     
@@ -81,13 +80,26 @@ class Resonator(DrawGroup):
             self.append(feedTrace)
             self.append(MolexSmdSma(feedTrace.endArrow,stack[0]))
         
-        groundPlane = self.rectangularHull().outset(self.margin)
-        groundPlane.gerberLayer = stack[1].copper[0]
-        self.append(groundPlane)
+        self.groundPlane = self.rectangularHull().outset(self.margin)
+        self.groundPlane.gerberLayer = stack[1].copper[0]
+        self.append(self.groundPlane)
 
 resonator = Resonator(traceWidth,9e9,effectiveRelativePermittivity)
-resonator.startArrow = card.groundPlane.bottomRightArrow.alongArrow(-1.5*resonator.outerDiameter()).turnedRight().alongArrow(-1.5*resonator.outerDiameter())
+#print resonator[0]
 resonator.topRight = card.groundPlane.bottomRight
+
+boardOutline = ClosedStrokeContour([resonator.groundPlane.topLeft,
+                                    resonator.groundPlane.bottomLeft,
+                                    resonator.groundPlane.bottomRight,
+                                    card.groundPlane.topRight,
+                                    card.groundPlane.topLeft,
+                                    card.groundPlane.bottomLeft])
+                                    
+boardOutline = card.outline() + resonator.outline()                                    
+                                    
+boardOutline.draw(stack.mechanical[0],stack.mechanicalAperture)
+
+
 resonator.draw()
 
 stack.writeOut()
