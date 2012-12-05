@@ -39,14 +39,13 @@ class GtemCard():
                                      self.bottomWidth,
                                      (1-self.noGroundFraction)*self.bottomWidth)
 
-
-        Rectangle(rectangle=extraGroundPlane,gerberLayer=stack[2].copper[2])
-        Rectangle(rectangle=extraGroundPlane,gerberLayer=stack[1].copper[2])
+        Rectangle(rectangle=extraGroundPlane,gerberLayer=stack[2].copper[2]).draw()
+        Rectangle(rectangle=extraGroundPlane,gerberLayer=stack[1].copper[2]).draw()
         
         stitchingPitch = max(self.stitchingPitch(),stack.classification.viaStitchingPitch(stack.classification.minimumFinishedHoleDiameter))
         
         def viaStamp(arrowAlongBorder):
-            MinimumVia(arrowAlongBorder.turnedRight()).draw(stack)     
+            MinimumVia(arrowAlongBorder.turnedRight(),stack=stack).draw()     
         extraGroundPlane.outline().lines()[0].reversed().stamp(stitchingPitch,viaStamp,center=True)
         groundVoidRectangle(self.center(),self.bottomWidth,bottomCornerHeight).lines().stamp(stitchingPitch,viaStamp)
         
@@ -88,7 +87,7 @@ class HSensor:
                 
         productionHoleDiameter = self.face.stack.classification.minimumProductionHoleDiameter
         finishedHoleDiameter = self.face.stack.classification.finishedHoleDiameter(productionHoleDiameter)
-        traceWidth = self.face.stack.classification.minimumViaPad(finishedHoleDiameter)
+        traceWidth = self.face.minimumViaPad(finishedHoleDiameter)
         
         connector = MolexSma(self.startArrow,face=self.face.opposite,signalFaceDiameterTuples=[(self.face,traceWidth)])
         connector.draw()        
@@ -97,7 +96,7 @@ class HSensor:
         trace = LineSegment(traceLength,self.startArrow)
         trace.paint(self.face.copper[10],traceWidth)
 
-        Via(trace.endArrow.origin,finishedHoleDiameter,padFaceDiameterTuples=[(self.face,traceWidth)],skipFaces=[self.face.opposite]).draw(self.face.stack)
+        Via(trace.endArrow.origin,finishedHoleDiameter,padFaceDiameterTuples=[(self.face,traceWidth)],skipFaces=[self.face.opposite],stack=self.face.stack).draw()
         
         Circle(self.startArrow.origin,(traceLength+0.5*traceWidth)*2.*2.,self.face.solderMask[10]).draw()      
         
@@ -105,52 +104,54 @@ class HSensor:
         StrokeText(connector.labelArrow,'H ({loopLength:.2f}x{height:.2f}mm)'.format(loopLength=loopLength,height=self.face.depth-self.face.thickness),self.face.opposite.silkscreen[0],align=0).draw()
 
         
-class Via(object):
-    def __init__(self,location=None,finishedHoleDiameter=None,padFaceDiameterTuples=[],antipadDiameter=None,isolateFaces=[],skipFaces=[]):
+class Via(DrawGroup):
+    def __init__(self,location=None,finishedHoleDiameter=None,padFaceDiameterTuples=[],antipadDiameter=None,isolateFaces=[],skipFaces=[],stack=None):
         self.location = location
         self.finishedHoleDiameter = finishedHoleDiameter
         self.padFaceDiameterTuples = padFaceDiameterTuples
         self.isolateFaces = isolateFaces
         self.skipFaces = skipFaces
         self.antipadDiameter = antipadDiameter
-    def draw(self,stack):
-        facesNeedAntipad = stack[:]
+        self.stack = stack
+        
+        facesNeedAntipad = self.stack[:]
         maximumFinishedHoleSize = +numpy.inf
-        largestPadDiameter = None
+        self.largestPadDiameter = 0.
                 
         for (face,padDiameter) in self.padFaceDiameterTuples:
-            Circle(self.location,padDiameter,face.copper[20]).draw()
+            self.append(Circle(self.location,padDiameter,face.copper[20]))
             if face in self.isolateFaces:
-                Circle(self.location,stack.classification.minimumViaClearPad(padDiameter),face.copper[11]).draw()
-            maximumFinishedHoleSize = min(stack.classification.maximumFinishedHoleDiameter(padDiameter),maximumFinishedHoleSize)
-            largestPadDiameter = max(padDiameter,largestPadDiameter)
+                self.append(Circle(self.location,self.stack.classification.minimumViaClearPad(padDiameter),face.copper[11]))
+            maximumFinishedHoleSize = min(face.maximumFinishedHoleDiameter(padDiameter),maximumFinishedHoleSize)
+            self.largestPadDiameter = max(padDiameter,self.largestPadDiameter)
             facesNeedAntipad.remove(face)
         for face in self.skipFaces:
             facesNeedAntipad.remove(face)
         
         if not self.antipadDiameter:
-            self.antipadDiameter = largestPadDiameter
+            self.antipadDiameter = self.largestPadDiameter
         if self.antipadDiameter:
             for face in facesNeedAntipad:
-                Circle(self.location,self.antipadDiameter,face.copper[21]).draw()
+                self.append(Circle(self.location,self.antipadDiameter,face.copper[21]))
           
         if not self.finishedHoleDiameter:
             self.finishedHoleDiameter = maximumFinishedHoleSize
         assert self.finishedHoleDiameter <= maximumFinishedHoleSize
-        stack.addHole(Hole(self.location,self.finishedHoleDiameter,plated=True))
+        self.append(Hole(self.location,self.finishedHoleDiameter,plated=True,stack=self.stack))
+        
+    
+
             
 class MinimumVia(Via):
-    def __init__(self,startArrow=None,*args,**kwargs):
-        super(MinimumVia,self).__init__(*args,**kwargs)
-        self.startArrow = startArrow
-    def draw(self,stack):
-        if not self.finishedHoleDiameter:
-            self.finishedHoleDiameter = stack.classification.minimumFinishedHoleDiameter
-        self.padDiameter = stack.classification.viaClearance(self.finishedHoleDiameter)
-        if type(self.location) == type(None):
-            self.location = self.startArrow.along(self.padDiameter)
-        Via.draw(self,stack)
-
+    def __init__(self,startArrow=None,location=None,finishedHoleDiameter=None,stack=None,*args,**kwargs):
+        if not finishedHoleDiameter:
+            finishedHoleDiameter = stack.classification.minimumFinishedHoleDiameter
+        padDiameter = stack.classification.viaClearance(finishedHoleDiameter,inner=False)
+        if type(location) == type(None):
+            location = startArrow.along(padDiameter)
+                
+        super(MinimumVia,self).__init__(location = location,finishedHoleDiameter=finishedHoleDiameter,stack=stack,*args,**kwargs)
+    
 class MolexSma:
     '''http://www.molex.com/pdm_docs/sd/732511850_sd.pdf'''
     mountingHoleClearance = 3.58
@@ -182,7 +183,7 @@ class MolexSma:
         Circle(self.center,self.groundGapDiameter,self.face.copper[11]).draw()
               
         # Central via
-        Via(self.center,antipadDiameter=self.groundGapDiameter,padFaceDiameterTuples=[(self.face,self.signalPadDiameter)]+self.signalFaceDiameterTuples).draw(stack)        
+        Via(self.center,antipadDiameter=self.groundGapDiameter,padFaceDiameterTuples=[(self.face,self.signalPadDiameter)]+self.signalFaceDiameterTuples,stack=stack).draw()        
         
         # Ground vias
         if len(self.groundFaces) > 0:
@@ -192,7 +193,7 @@ class MolexSma:
                 viaAngles = numpy.linspace(self.groundStartAngle,self.groundStartAngle+2.*numpy.pi,self.groundVias,endpoint=False)
             
             for viaAngle in viaAngles:
-                MinimumVia(self.startArrow.rotated(viaAngle).alongArrow(self.groundGapDiameter/2.),skipFaces=[self.face]+self.groundFaces).draw(stack)
+                MinimumVia(self.startArrow.rotated(viaAngle).alongArrow(self.groundGapDiameter/2.),skipFaces=[self.face]+self.groundFaces,stack=stack).draw()
 
         # Mounting holes
         stack.addHole(Hole(self.startArrow.right(self.mountingHoleClearance),self.mountingHoleDiameter,plated=False))
@@ -202,17 +203,22 @@ class MolexSmdSma(DrawGroup):
     padSpacing = 4.75
     groundPadSize = 1.91
     centerPadSize = 1.52    
+    groundViaDiameter = 0.35
     
-    def __init__(self,startArrow,face):
+    def __init__(self,startArrow,face,drawVias=False):
         DrawGroup.__init__(self)        
         self.startArrow = startArrow
         self.face = face
         
         sides = Square(centerArrow=self.startArrow, width=self.padSpacing).outline().lines()
+
         for side in sides:
             groundCopperPad = Square(centerArrow=side.startArrow, width=self.groundPadSize)
             groundPad = RectanglePad(groundCopperPad,self.face,solderMask = True)
             self.append(groundPad)
+            if drawVias:
+                self.append(Via(groundPad.center,finishedHoleDiameter=self.groundViaDiameter,skipFaces=self.face.stack,stack=self.face.stack))
+                
         signalCopperPad = Circle(self.startArrow.origin,self.centerPadSize)
         signalPad = CirclePad(signalCopperPad,self.face,solderMask = True,isolation=None)
         self.append(signalPad)
@@ -227,7 +233,7 @@ class AgilentProbePads(object):
         self.face = face
     def draw(self,groundVias=True):
         Circle(self.startArrow.origin,self.padDiameter).draw(self.face.copper[10])
-        Via(self.startArrow.origin,padFaceDiameterTuples)
+        Via(self.startArrow.origin,padFaceDiameterTuples,stack=stack).draw()
         
                
 class RingResonator(DrawGroup):
@@ -258,7 +264,7 @@ class RingResonator(DrawGroup):
     def outerDiameter(self):
         return self.innerDiameter() + 2.*self.traceWidth 
     def endArrows(self):
-        gapWidth = self.face.stack.classification.minimumOuterPadToPad      
+        gapWidth = self.face.stack.classification.minimumPadToPad      
         outset = self.outerDiameter()/2.+gapWidth*2.
         
         return [self.startArrow.alongArrow(outset),
@@ -286,6 +292,8 @@ def groundVoidRectangle(centerLocation,width,cornerHeight,outset=0.):
     
 if __name__ == '__main__':
     from pypcb import *
-    GtemCard().draw(Stack(4))
+#    GtemCard().draw(Stack(4))
+    stack = Stack(4)
+    connector = MolexSmdSma(Arrow(Location(0,0),E),stack[0],True)
 
         

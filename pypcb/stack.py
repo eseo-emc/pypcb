@@ -25,29 +25,45 @@ class EuroCircuits(Classification):
     @property
     def minimumFinishedHoleDiameter(self):
         return self.finishedHoleDiameter(self.minimumProductionHoleDiameter)
-    def minimumViaPad(self,finishedHoleDiameter):
-        return self.productionHoleDiameter(finishedHoleDiameter) + 2.*self.minimumOuterAnnularRing
+    def minimumAnnularRing(self,inner=True):
+        return (self.minimumInnerAnnularRing if inner else self.minimumOuterAnnularRing)
+    def minimumViaPad(self,finishedHoleDiameter=None,inner=True):
+        if not finishedHoleDiameter:
+            finishedHoleDiameter = self.minimumFinishedHoleDiameter
+        return self.productionHoleDiameter(finishedHoleDiameter) + 2.*self.minimumAnnularRing(inner)
     def minimumViaClearPad(self,padDiameter):
-        return padDiameter + 2.*self.minimumOuterPadToPad
+        return padDiameter + 2.*self.minimumPadToPad
     
     
-    def maximumFinishedHoleDiameter(self,viaPadDiameter):
-        return self.finishedHoleDiameter(viaPadDiameter - 2.*self.minimumOuterAnnularRing)
+    def maximumFinishedHoleDiameter(self,viaPadDiameter,inner=True):
+        return self.finishedHoleDiameter(viaPadDiameter - 2.*self.minimumAnnularRing(inner))
     
-    def viaClearance(self,finishedHoleDiameter):
-        return 0.5*self.minimumViaPad(finishedHoleDiameter)
+    def viaClearance(self,finishedHoleDiameter,inner=True):
+        return 0.5*self.minimumViaPad(finishedHoleDiameter,inner)
     def viaStitchingPitch(self,finishedHoleDiameter):
          return self.productionHoleDiameter(finishedHoleDiameter)+0.15
          
-    
-class EuroCircuits6C(EuroCircuits):
-    minimumOuterPadToPad = 0.150
-    minimumOuterAnnularRing = 0.125
+class EuroCircuitsC(EuroCircuits):
     minimumProductionHoleDiameter = 0.35
-class EuroCircuits5B(EuroCircuits):
-    minimumOuterPadToPad = 0.150
-    minimumOuterAnnularRing = 0.125
+    
+class EuroCircuitsB(EuroCircuits):
     minimumProductionHoleDiameter = 0.45
+
+class EuroCircuits6(EuroCircuits):
+    minimumPadToPad = 0.150
+    minimumOuterAnnularRing = 0.125
+    minimumInnerAnnularRing = 0.175
+
+class EuroCircuits5(EuroCircuits):
+    minimumPadToPad = 0.200
+    minimumOuterAnnularRing = 0.150
+    minimumInnerAnnularRing = 0.200
+    
+class EuroCircuits6C(EuroCircuits6,EuroCircuitsC):
+    pass    
+    
+    
+
 
 class FaceList(list):
     pass
@@ -59,6 +75,9 @@ class Face():
         self.solderMask = solderMask
         self.silkscreen = silkscreen
         self.thickness = thickness
+    @property
+    def isInner(self):
+        return not(self.faceNumber == 0 or self.faceNumber == len(self.stack)-1)
     @property
     def permittivity(self):
         return self.stack.classification.permittivity
@@ -77,6 +96,13 @@ class Face():
             self.solderMask.writeOut()
         if self.silkscreen:
             self.silkscreen.writeOut()
+        
+    def minimumViaPad(self,finishedHoleDiameter=None):
+        return self.stack.classification.minimumViaPad(finishedHoleDiameter,self.isInner)
+    def viaClearance(self,finishedHoleDiameter):
+        return self.stack.classification.minimumViaPad(finishedHoleDiameter,self.isInner)
+    def maximumFinishedHoleDiameter(self,padDiameter):
+        return self.stack.classification.maximumFinishedHoleDiameter(padDiameter,self.isInner)
 
 class Stack(list):
     classification = EuroCircuits6C()    
@@ -89,7 +115,7 @@ class Stack(list):
         list.__init__(self,[None]*numberOfFaces)
         ## file initialisation
         self._platedFile = Excellon('Drill Plated',plated=True)
-        self._nonPlatedFile = Excellon('Drill Non-plated',plated=False)
+        self._nonPlatedFile = Excellon('Drill Unplated',plated=False)
         self._drillFile = HoleFile(self._platedFile,self._nonPlatedFile)
         self.addHole = self._drillFile.addHole
         
@@ -113,9 +139,10 @@ class Stack(list):
         self[-1].opposite = self[ 0]
         self[ 0].opposite = self[-1]        
         
+        
         self.mechanical = GerberFile('Mechanical Outline')
         self.mechanicalApertureDiameter = 0.2
-        self.mechanicalAperture = self.mechanical.addCircularAperture(self.mechanicalApertureDiameter)
+        self.boardOutline = Square(center=Location(0,0),width=100).outline()        
         
         assert self.numberOfFaces == numberOfFaces
  
@@ -123,13 +150,28 @@ class Stack(list):
     @property
     def thickness(self):
         return self[0].thickness + self[-1].depth
+    @property 
+    def width(self):
+        return self.boardOutline.rectangularHull().width
+    @property 
+    def height(self):
+        return self.boardOutline.rectangularHull().height    
         
     def writeOut(self):
+        def addAperture(gerberFile):
+            apertureNumber = gerberFile.addCircularAperture(self.mechanicalApertureDiameter)
+            self.boardOutline.draw(gerberFile[0],apertureNumber)
+            
+        addAperture(self.mechanical)
+        self.mechanical.writeOut()   
+
         for face in self:
+            addAperture(face.copper)
             face.writeOut()
         
-        self.mechanical.writeOut()      
+   
         self._drillFile.writeOut()
         
 if __name__ == '__main__':
-    print Stack(4).thickness
+    stack = Stack(4)
+    print stack.thickness

@@ -1,5 +1,5 @@
 import numpy
-from copy import copy
+from copy import deepcopy
 
 from lazy import *
 
@@ -55,6 +55,18 @@ class DrawGroup(list):
     @bottomLeft.setter
     def bottomLeft(self,newValue):
         self.translate(newValue-self.bottomLeft)
+    @property
+    def bottomRight(self):
+        return self.rectangularHull().bottomRight
+    @bottomRight.setter
+    def bottomRight(self,newValue):
+        self.translate(newValue-self.bottomRight)
+    @property
+    def topLeft(self):
+        return self.rectangularHull().topLeft
+    @topLeft.setter
+    def topLeft(self,newValue):
+        self.translate(newValue-self.topLeft)
 class Drawable(object):
     def __str__(self):
         return '{className}({startArrow})'.format(className=self.__class__.__name__,startArrow=self.startArrow)
@@ -65,13 +77,18 @@ class Drawable(object):
     def draw(self):
         raise NotImplementedError
 
-class Hole(object):
+class Hole(Drawable):
     margin = 0.1
         
-    def __init__(self,location,diameter,plated=True):
-        self.location = copy(location)
+    def __init__(self,location,diameter,plated=True,stack=None):
+        assert location is not None
+        self.location = deepcopy(location)
         self.diameter = diameter
         self.plated = plated
+        self.stack = stack
+    def __str__(self):
+        return '{className}({location},{diameter})'.format(className=self.__class__.__name__,location=self.location,diameter=self.diameter)
+
     def tooClose(self,other):
 #         margin = (self.diameter + other.diameter)/2 + .3+ 0.150
         return other.location.almostEqualTo(self.location,self.margin)
@@ -79,6 +96,12 @@ class Hole(object):
         assert self.diameter == other.diameter
         assert self.plated == other.plated
         self.location = (self.location + other.location)/2
+    def draw(self):
+        self.stack.addHole(self)
+    def translate(self,translationVector):
+        self.location += translationVector
+    def rectangularHull(self):
+        return Circle(self.location,self.diameter).rectangularHull()    
         
             
 class HoleFile(object):
@@ -280,8 +303,8 @@ class ALine(Convertible):
 
 class Arrow(object):
     def __init__(self,origin,direction):
-        self.origin = copy(origin)
-        self.direction = copy(direction)
+        self.origin = deepcopy(origin)
+        self.direction = deepcopy(direction)
     def __repr__(self):
         return 'Arrow({origin},{direction})'.format(origin=self.origin,direction=self.direction)
     def __add__(self,vector):
@@ -344,15 +367,15 @@ class Segment(object):
     pass
 class Stroke(Segment):
     def __init__(self,targetLocation):
-        self.targetLocation = copy(targetLocation)
+        self.targetLocation = deepcopy(targetLocation)
     def __repr__(self):
         return 'Stroke({location})'.format(location=self.targetLocation)
     def assertAlmostEqual(self,other):
         self.targetLocation.assertAlmostEqual(other.targetLocation)
 class Arc(Segment):
     def __init__(self,targetLocation,origin,counterClockWise):
-        self.targetLocation = copy(targetLocation)
-        self.origin = copy(origin)
+        self.targetLocation = deepcopy(targetLocation)
+        self.origin = deepcopy(origin)
         self.counterClockWise = counterClockWise
 class ClosedContour(RotatableList):
     def outset(self,outsetClearance):
@@ -376,7 +399,7 @@ class ClosedContour(RotatableList):
     def drawToFace(self,face,isolation=0.,solderMask=False):
         self.draw(face.copper[20])
         if isolation == None:
-            isolation = face.stack.classification.minimumOuterPadToPad
+            isolation = face.stack.classification.minimumPadToPad
         if isolation > 0.:
             self.outset(isolation).draw(face.copper[11])
         if solderMask:
@@ -459,7 +482,7 @@ class Path(object):
             stampFunctionOfArrow(self.alongArrow(length+offset))
 class Bend(Path):
     def __init__(self,length,bendRadius,startArrow=Arrow(Location(0.,0.),Direction(1.,0.))):
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
         self.length = length
         self.bendRadius = bendRadius
     def __repr__(self):
@@ -494,7 +517,7 @@ class Bend(Path):
 class MiteredBend(Path):
     def __init__(self,startArrow,width,thickness):
         '''http://www.microwaves101.com/encyclopedia/mitered_bends.cfm'''
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
         self.width = width
         self.thickness = thickness
     @property
@@ -537,7 +560,7 @@ class LineSegment(Path):
             self.startArrow = Arrow(startEnd[0],Direction(delta))
             self.length = delta.length()
         else:
-            self.startArrow = copy(startArrow)
+            self.startArrow = deepcopy(startArrow)
             self.length = length
     def __repr__(self):
         return 'LineSegment({length})'.format(length=self.length)
@@ -616,11 +639,11 @@ class LineSegment(Path):
 class Rectangle(Drawable): #was list
     def __init__(self,startArrow=None,width=None,height=None,gerberLayer=None,apertureNumber=None,bottomLeft=None,topRight=None,rectangle=None):
         if rectangle is not None:
-            self.startArrow = copy(rectangle.startArrow)
+            self.startArrow = deepcopy(rectangle.startArrow)
             self.width = rectangle.width
             self.height = rectangle.height
         elif type(bottomLeft) is type(None):
-            self.startArrow = copy(startArrow)
+            self.startArrow = deepcopy(startArrow)
             self.width = width
             self.height = height
         else:
@@ -665,6 +688,10 @@ class Rectangle(Drawable): #was list
     @property 
     def topLeft(self):
         return self.topLeftArrow.origin
+        
+    @property
+    def center(self):
+        return Location((self.bottomLeft+self.topRight)/2.)
       
     def pointInRectangle(self,point):
         return point.approximatelyGreaterOrEqualTo(self.bottomLeft).all() and self.topRight.approximatelyGreaterOrEqualTo(point).all()
@@ -683,7 +710,7 @@ class Square(Rectangle):
         
 class Circle(Drawable):
     def __init__(self,center=None,diameter=None,gerberLayer=None):
-        self.center = copy(center)
+        self.center = deepcopy(center)
         self.diameter = diameter
         self.gerberLayer = gerberLayer
     def __str__(self):
@@ -717,6 +744,9 @@ class CompositeCurve(RotatableList,Path):
     @property
     def endArrow(self):
         return self[-1].endArrow
+    @property
+    def halfwayArrow(self):
+        return self.alongArrow(self.length/2.)
      
     @property
     def length(self):
@@ -748,7 +778,7 @@ class Trace(CompositeCurve):
     '''
     def __init__(self,startArrow,width=None):
         super(Trace,self).__init__()
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
         self.width = width
         
     def append(self,newPath):
@@ -763,7 +793,7 @@ class Trace(CompositeCurve):
     def propagateArrows(self):
         startArrow = self.startArrow
         for path in self:
-            path.startArrow = copy(startArrow)
+            path.startArrow = deepcopy(startArrow)
             startArrow = path.endArrow
          
 class LineList(CompositeCurve):
@@ -890,7 +920,10 @@ class Pad(Drawable):
         return self.primitive.rectangularHull()
     def translate(self,translationVector):
         self.primitive.translate(translationVector)
-    # TODO: factor in below copy-pastism
+    @property
+    def center(self):
+        return self.primitive.center
+    # TODO: factor in below deepcopy-pastism
 
 class CirclePad(Pad):
     def __init__(self,primitive,face,isolation=0.,solderMask=False):
@@ -901,7 +934,7 @@ class CirclePad(Pad):
     def draw(self):
         self.primitive._drawToLayer(self.face.copper[20])
         if self.isolation == None:
-            self.isolation = self.face.stack.classification.minimumOuterPadToPad
+            self.isolation = self.face.stack.classification.minimumPadToPad
         if self.isolation > 0.:
             self.primitive.outset(self.isolation)._drawToLayer(self.face.copper[11])
         if self.solderMask:
@@ -948,7 +981,7 @@ class Sma(object):
             trace.viaEndOffset = mil(25)
         
     def __init__(self,startArrow,trace):
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
         self.trace = trace
     
     def draw(self,topFile,solderMaskTop,solderMaskBottom=None):
@@ -966,7 +999,7 @@ class Sma(object):
         pullBack = LineSegment(self.gapLength,self.startArrow)
         pullBack.paint(topFile[3],self.trace.width+2*self.trace.gap)
 
-class Soic8(object):
+class Soic(object):
     padWidth = 1.52
     padHeight = 0.6
     pitch = 1.27
@@ -976,14 +1009,15 @@ class Soic8(object):
     dropExcessHeight = 0.15
         
     def __init__(self,startArrow=Arrow(Location(0.,0.),E),padClearance=0.4,solderMaskClearance=.1):
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
         self.padClearance = padClearance
         self.solderMaskClearance = solderMaskClearance
     
     def padCentersAndArrows(self):
-        startTopLeft = self.startArrow.reversed().alongArrow(self.span/2-self.padWidth/2).outsetArrow(1.5*self.pitch)
-        startBottomRight =        self.startArrow.alongArrow(self.span/2-self.padWidth/2).outsetArrow(1.5*self.pitch)
-        padArrows = startTopLeft.repeatRight(-self.pitch,4) + startBottomRight.repeatRight(-self.pitch,4)        
+        heightOffset = float(self.numberOfPins)/4.-0.5
+        startTopLeft = self.startArrow.reversed().alongArrow(self.span/2-self.padWidth/2).outsetArrow(heightOffset*self.pitch)
+        startBottomRight =        self.startArrow.alongArrow(self.span/2-self.padWidth/2).outsetArrow(heightOffset*self.pitch)
+        padArrows = startTopLeft.repeatRight(-self.pitch,self.numberOfPins/2) + startBottomRight.repeatRight(-self.pitch,self.numberOfPins/2)        
         padCenters = map(lambda arrow: arrow.along(self.padWidth/2),padArrows)            
         return (padCenters,padArrows)
     
@@ -991,10 +1025,12 @@ class Soic8(object):
         return map(lambda padArrow: padArrow.alongArrow(self.padWidth),self.padCentersAndArrows()[1])
     
     def padTraces(self):
+        traces = []
         for startArrow in self.padCentersAndArrows()[1]:
             newTrace = Trace(startArrow,self.padHeight)
             newTrace.append(LineSegment(self.padWidth))
-            yield newTrace
+            traces += [newTrace]
+        return traces
         
     def draw(self,face):
         for trace in self.padTraces():
@@ -1024,6 +1060,11 @@ class Soic8(object):
 #            if solderMaskFile:
 #                solderMaskLayer.flashAperture(padCenter,solderMaskClearanceAperture)
 #                solderMaskDropLayer.flashAperture(arrow.along(self.padWidth+self.dropWidth/2.),solderMaskDropAperture)
+
+class Soic8(Soic):
+    numberOfPins = 8
+class Soic14(Soic):
+    numberOfPins = 14
 
 class End(object):
     backViaOffset = 0.
@@ -1096,7 +1137,7 @@ class R0805ToGround:
     padGap = 0.76    
     
     def __init__(self,startArrow):
-        self.startArrow = copy(startArrow)
+        self.startArrow = deepcopy(startArrow)
     def draw(self,face):
         Rectangle(self.startArrow,self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True,isolation=None)
         Rectangle(self.startArrow.alongArrow(self.padLength+self.padGap),self.padLength,self.padWidth).outline().drawToFace(face,solderMask=True)
