@@ -67,6 +67,9 @@ class DrawGroup(list):
     @topLeft.setter
     def topLeft(self,newValue):
         self.translate(newValue-self.topLeft)
+    @property
+    def width(self):
+        return self.rectangularHull().width
 class Drawable(object):
     def __str__(self):
         return '{className}({startArrow})'.format(className=self.__class__.__name__,startArrow=self.startArrow)
@@ -126,15 +129,15 @@ class HoleFile(object):
             else:
                 self.looseHoles.append(newHole)
     
-    def writeOut(self):
+    def writeOut(self,*args,**kwargs):
         for hole in self.fixedHoles + self.looseHoles:
             if hole.plated:
                 self.platedFile.addHole(hole.location,hole.diameter)
             else:
                 self.nonPlatedFile.addHole(hole.location,hole.diameter)
                 
-        self.platedFile.writeOut()
-        self.nonPlatedFile.writeOut()
+        self.platedFile.writeOut(*args,**kwargs)
+        self.nonPlatedFile.writeOut(*args,**kwargs)
 
 ## Collections
 class ApproximateList(list):
@@ -480,6 +483,9 @@ class Path(object):
             numberOfSteps = numberOfStamps + 1
         for length in numpy.arange(numberOfSteps)*realPitch:
             stampFunctionOfArrow(self.alongArrow(length+offset))
+    @property
+    def halfwayArrow(self):
+        return self.alongArrow(self.length/2.)
 class Bend(Path):
     def __init__(self,length,bendRadius,startArrow=Arrow(Location(0.,0.),Direction(1.,0.))):
         self.startArrow = deepcopy(startArrow)
@@ -744,9 +750,7 @@ class CompositeCurve(RotatableList,Path):
     @property
     def endArrow(self):
         return self[-1].endArrow
-    @property
-    def halfwayArrow(self):
-        return self.alongArrow(self.length/2.)
+
      
     @property
     def length(self):
@@ -850,7 +854,8 @@ class MicrostripTrace(CompositeCurve):
         for segment in self:
             copperOutline = segment.outline(self.traceWidth)
             copperOutline.drawToFace(self.face,isolation=None)
-            copperOutline.outset(self.traceWidth).draw(self.face.solderMask[10])
+            if self.face.solderMask:
+                copperOutline.outset(self.traceWidth).draw(self.face.solderMask[10])
 
 class CoplanarTrace(Trace):
     @classmethod

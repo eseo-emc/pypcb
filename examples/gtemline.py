@@ -1,14 +1,4 @@
 from pypcb import *
-stack = Stack(numberOfFaces=4)
-stack[-1].silkscreen.export = False # cheaper
-
-card = GtemCard(frequencyLimit=20e9)
-card.draw(stack)
-
-outerTraceWidth = 0.67 # 50 ohm microstrip on h=360um, er=4.3, t=25um, f=10GHz, according to http://www1.sphere.ne.jp/i-lab/ilab/tool/ms_line_e.htm
-innerTraceWidth = 0.468 # 50 ohm microstrip according to ATLC2 refined with CST
-effectiveRelativePermittivity = 3.243 # 50 ohm microstrip on h=360um, er=4.3, t=25um, f=10GHz, according to ADS LineCalc
-longLength = 30.
 
 
 def drawMolexAndVias(startArrow,traceFace,traceWidth):
@@ -22,7 +12,12 @@ class StraightTrace(DrawGroup):
         self.traceWidth = traceWidth
         self.trace = LineSegment(length,startArrow)
         self.face = face
+        self.label = StrokeText(textString='microstrip ({traceLayer}-{groundLayer}) {length:.1f}mm'.format(traceLayer=face.faceNumber+1,groundLayer=face.faceNumber,length=length),
+                                startArrow=self.trace.halfwayArrow,
+                                align=0,
+                                gerberLayer=stack[0].silkscreen[0])
     def draw(self):
+        self.label.draw()
         self.trace.paint(self.face.copper[2],self.traceWidth)
         drawMolexAndVias(self.trace.startArrow,self.face,self.traceWidth)
         drawMolexAndVias(self.trace.endArrow,self.face,self.traceWidth)
@@ -49,6 +44,12 @@ class SnakeTrace(DrawGroup):
         self.corner1.drawToFace(stack[-1])
         self.corneredTrace2.paint(self.face.copper[10],outerTraceWidth)
         
+        for trace in [self.corneredTrace0,self.corneredTrace1,self.corneredTrace2]:
+            StrokeText(textString='{length:.1f}mm'.format(length=trace.length),
+                        startArrow=trace.halfwayArrow,
+                        align=0,
+                        gerberLayer=stack[0].silkscreen[0]).draw()
+        
         drawMolexAndVias(self.startArrow,self.face,outerTraceWidth)
         drawMolexAndVias(self.endArrow,self.face,outerTraceWidth)
 
@@ -57,7 +58,7 @@ class SoicAndTrace(DrawGroup):
         self.ic = Soic14(startArrow)
         self.ic.padHeight = outerTraceWidth
         self.ic.draw(stack[-1])
-        self.trace2 = LineSegment(longLength,self.ic.endArrows()[3])
+        self.inputTrace = LineSegment(longLength,self.ic.endArrows()[3])
 
         for (pinNumber,padTrace) in enumerate(self.ic.padTraces()):
             if pinNumber == 3:
@@ -71,10 +72,14 @@ class SoicAndTrace(DrawGroup):
         
         
         self.outputTrace = LineSegment(8.,self.ic.padTraces()[10].halfwayArrow)
+        self.label = StrokeText(textString='microstrip (4-3) {length:.1f}mm'.format(length=self.inputTrace.length),
+                        startArrow=self.inputTrace.halfwayArrow.reversed(),
+                        align=0,
+                        gerberLayer=stack[0].silkscreen[0])
         
     @property
     def endArrow(self):
-        return self.trace2.endArrow
+        return self.inputTrace.endArrow
         
     def draw(self):        
         self.outputTrace.outline(outerTraceWidth).drawToFace(stack[0],isolation=None)
@@ -83,8 +88,81 @@ class SoicAndTrace(DrawGroup):
         
         MolexSmdSma(self.outputTrace.endArrow,stack[0]).draw()        
         
-        self.trace2.paint(stack[-1].copper[2],outerTraceWidth)
+        self.inputTrace.paint(stack[-1].copper[2],outerTraceWidth)
+        self.label.draw()
         drawMolexAndVias(self.endArrow,stack[-1],outerTraceWidth)
+
+
+# Ring resonators
+class Resonator(DrawGroup):
+    margin = 5.0
+        
+class OuterResonator(Resonator):    
+    def __init__(self,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startLayer=10):
+        ringTop = RingResonator(stack[0],traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startLayer=startLayer)
+        ringBottom = RingResonator(stack[-1],traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startLayer=startLayer)
+        Resonator.__init__(self,[ringTop,ringBottom])
+        
+        for (drawVias,ring) in zip([True,False],[ringTop,ringBottom]):
+            for endArrow in ring.endArrows():
+                feedTrace = MicrostripTrace([LineSegment(5.,endArrow)],traceWidth,ring.face)
+                self.append(feedTrace)
+                self.append(MolexSmdSma(feedTrace.endArrow,ring.face,drawVias))
+                
+            ring.label.align = -1
+            ring.label.startArrow = Arrow(self[-1].topRight,E).alongArrow(self[-1].width/2).outsetArrow(self[-1].width/2)
+                        
+        groundPlane = self.rectangularHull().outset(self.margin)
+        self.append(Rectangle(rectangle=groundPlane,gerberLayer=stack[1].copper[0]))
+        self.append(Rectangle(rectangle=groundPlane,gerberLayer=stack[2].copper[0]))
+
+class InnerResonator(Resonator):
+    def __init__(self,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startLayer=10):
+        ring = RingResonator(stack[1],traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startLayer=startLayer)
+        Resonator.__init__(self,[ring])
+        
+        for endArrow in ring.endArrows():
+            feedTrace = MicrostripTrace([LineSegment(5.,endArrow)],traceWidth,ring.face)
+            self.append(feedTrace)
+            self.append(MolexSmdSma(feedTrace.endArrow,stack[0],True))
+            self.append(Via(feedTrace.endArrow.origin,
+                            padFaceDiameterTuples=[(stack[1],traceWidth)],
+                            isolateFaces=[stack[2]],
+                            skipFaces=[stack[0]],
+                            stack=stack))
+                            
+        ring.label.align = -1
+        ring.label.startArrow = Arrow(self[-2].topRight,E).alongArrow(self[-2].width/2).outsetArrow(self[-2].width/2)
+                
+        groundPlane = self.rectangularHull().outset(self.margin)
+        self.append(Rectangle(rectangle=groundPlane,gerberLayer=stack[2].copper[0]))
+
+class ResonatorCard(DrawGroup):
+    def __init__(self,traceWidth,resonator):
+        self.append(resonator(traceWidth,2e9,effectiveRelativePermittivity,startLayer=10))
+        self.append(resonator(traceWidth,9e9,effectiveRelativePermittivity,startLayer=14))
+        self.append(Legend(Arrow(self.topRight-PlaneVector(5.,5.),E),stack))
+        
+
+# Card
+outerTraceWidth = 0.67 # 0.67 # 50 ohm microstrip on h=360um, er=4.1, t=25um, f=10GHz, according to http://www1.sphere.ne.jp/i-lab/ilab/tool/ms_line_e.htm
+innerTraceWidth = 0.468 # 50 ohm microstrip according to ATLC2 refined with CST
+effectiveRelativePermittivity = 3.25 # 50 ohm microstrip on h=360um, er=4.1, t=25um, f=10GHz, according to ADS LineCalc
+longLength = 30.
+
+stack = Stack(numberOfFaces=4,title='GTEM field-to-line demo',author='Sjoerd OP \'T LAND\nGroupe ESEO, France')
+stack[-1].silkscreen.export = False # cheaper
+
+# Resonators
+outerResonator = ResonatorCard(outerTraceWidth,OuterResonator)
+innerResonator = ResonatorCard(innerTraceWidth,InnerResonator)
+
+
+card = GtemCard(frequencyLimit=20e9)
+#card.pcbSize = outerResonator.width
+card.draw(stack)
+
+
 
 soicAndTrace = SoicAndTrace(Arrow(card.center()+Location(0.5*longLength,30.),E))
 soicAndTrace.draw()
@@ -93,53 +171,27 @@ snakeTrace = SnakeTrace(soicAndTrace.endArrow.reversed().outsetArrow(25.),stack[
 snakeTrace.draw()
 StraightTrace(longLength,outerTraceWidth,snakeTrace.startArrow.outsetArrow(15.),stack[-1]).draw()
 
-
 # Sensors
 bottomCenterArrow = Arrow(card.center()+Vector([0,-32]),E)
 ESensor(bottomCenterArrow.alongArrow(+15),stack[-1]).draw()
 HSensor(bottomCenterArrow.alongArrow(+30),stack[-1]).draw()
 StraightTrace(longLength,innerTraceWidth,bottomCenterArrow.alongArrow(-longLength),stack[1]).draw()
 
-# Ring resonators
-class Resonator(DrawGroup):
-    margin = 5.0
-    
-    def __init__(self,outerTraceWidth,firstResonanceFrequency,effectiveRelativePermittivity):
-        ringTop = RingResonator(stack[0],outerTraceWidth,firstResonanceFrequency,effectiveRelativePermittivity)
-        ringBottom = RingResonator(stack[-1],outerTraceWidth,firstResonanceFrequency,effectiveRelativePermittivity)
-#        ringTop = Square(center=Location(0,0),width=20) 
-#        ringTop.gerberLayer= stack[0].copper[1]
-        DrawGroup.__init__(self,[ringTop,ringBottom])
-        
-        for (drawVias,ring) in zip([True,False],[ringTop,ringBottom]):
-            for endArrow in ring.endArrows():
-                feedTrace = MicrostripTrace([LineSegment(5.,endArrow)],outerTraceWidth,ring.face)
-                self.append(feedTrace)
-                self.append(MolexSmdSma(feedTrace.endArrow,ring.face,drawVias))
-
-                
-        hull = self.rectangularHull().outset(self.margin)
-
-        self.append(Rectangle(rectangle=hull,gerberLayer=stack[1].copper[0]))
-        self.append(Rectangle(rectangle=hull,gerberLayer=stack[2].copper[0]))
 
 
-resonator = Resonator(outerTraceWidth,9e9,effectiveRelativePermittivity)
+outerResonator.bottomLeft = card.groundPlane.bottomRight + PlaneVector(stack.classification.breakRoutingGap,0)
+innerResonator.bottomLeft = outerResonator.bottomRight + PlaneVector(stack.classification.breakRoutingGap,0)
 
-resonator.topRight = card.groundPlane.bottomRight
 
-
-stack.boardOutline = ClosedStrokeContour([resonator.topLeft,
-                                    resonator.bottomLeft,
-                                    resonator.bottomRight,
-                                    card.groundPlane.topRight,
-                                    card.groundPlane.topLeft,
-                                    card.groundPlane.bottomLeft])
+stack.boardOutline = DrawGroup([card.groundPlane,
+                      innerResonator.rectangularHull(),
+                      outerResonator.rectangularHull()])
+#stack.boardOutline = card.groundPlane.outline()
                                    
 
 
-resonator.draw()
+outerResonator.draw()
+innerResonator.draw()
 
-stack.writeOut()
 
-print 'Written out board {width:.2f} x {height:.2f} mm'.format(width=stack.width,height=stack.height)
+stack.writeOut(toZip=True)

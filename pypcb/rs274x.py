@@ -144,19 +144,23 @@ class GerberFile(object):
         string += 'M02*' # program stop
         return string
 
-    def writeOut(self,name=None):
+    def writeOut(self,name=None,zipFile=None):
         if self.export:
             if name == None:
                 name = self.name
             
-            outputDirectory = os.path.abspath('../output')
-            if not os.path.exists(outputDirectory):
-                print 'Creating output directory ' + outputDirectory
-                os.makedirs(outputDirectory)
-            self.fileHandle = open(outputDirectory + '/' + name + '.gbr','w')
+            if zipFile:
+                zipFile.writestr(name + '.gbr',str(self))
+            else:
+                outputDirectory = os.path.abspath('../output')
+                if not os.path.exists(outputDirectory):
+                    print 'Creating output directory ' + outputDirectory
+                    os.makedirs(outputDirectory)
+                self.fileHandle = open(outputDirectory + '/' + name + '.gbr','w')
+                    
+                self.fileHandle.write(str(self))
+                self.fileHandle.close()
                 
-            self.fileHandle.write(str(self))
-            self.fileHandle.close()
 
     def imageName(self):
         return '%IN{0}*%\n'.format(self.name.upper())

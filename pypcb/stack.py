@@ -1,12 +1,18 @@
 from excellon import Excellon
 from geometry import *
 from rs274x import GerberFile
+from stroketext import StrokeText,LayerMarker
+import zipfile
+import os
+import datetime
 
 class Classification:
     pass
 class EuroCircuits(Classification):
     solderMaskMisalignment = 0.1
-    permittivity = 4.3
+    permittivity = {1e9: 4.10, 2e9: 4.08} #Technolam_data_sheets_NP-115.pdf
+    breakRoutingGap = 2.0
+    drillIncrement = 0.05
     
     def productionHoleDiameter(self,finishedHoleDiameter):
         if finishedHoleDiameter <= 0.450:
@@ -22,6 +28,10 @@ class EuroCircuits(Classification):
             return ValueError
         else:
             return productionHoleDiameter - 0.150
+    def normaliseProductionHoleDiameter(self,productionHoleDiameter):
+        return self.drillIncrement*round(productionHoleDiameter/self.drillIncrement)
+    def normaliseProductionHoleDiameterDown(self,productionHoleDiameter):
+        return self.drillIncrement*numpy.floor(productionHoleDiameter/self.drillIncrement)
     @property
     def minimumFinishedHoleDiameter(self):
         return self.finishedHoleDiameter(self.minimumProductionHoleDiameter)
@@ -36,7 +46,7 @@ class EuroCircuits(Classification):
     
     
     def maximumFinishedHoleDiameter(self,viaPadDiameter,inner=True):
-        return self.finishedHoleDiameter(viaPadDiameter - 2.*self.minimumAnnularRing(inner))
+        return self.normaliseProductionHoleDiameterDown(round(self.finishedHoleDiameter(viaPadDiameter - 2.*self.minimumAnnularRing(inner)),3))
     
     def viaClearance(self,finishedHoleDiameter,inner=True):
         return 0.5*self.minimumViaPad(finishedHoleDiameter,inner)
@@ -73,7 +83,7 @@ class Face():
         self.stack = stack
         self.copper = copper
         self.solderMask = solderMask
-        self.silkscreen = silkscreen
+        self._silkscreen = silkscreen
         self.thickness = thickness
     @property
     def isInner(self):
@@ -85,17 +95,23 @@ class Face():
     def faceNumber(self):
         return self.stack.index(self)
     @property
+    def closestOuterFace(self):
+        return self.stack[int(round(float(self.faceNumber)/(len(self.stack)-1)))*(len(self.stack)-1)]
+    @property
     def depth(self):
         if self.faceNumber == 0:
             return 0.
         else:
             return self.stack[self.faceNumber-1].depth + self.stack.dielectricThicknesses[self.faceNumber-1] + self.thickness
-    def writeOut(self):
-        self.copper.writeOut()
+    @property
+    def silkscreen(self):
+        return self.closestOuterFace._silkscreen
+    def writeOut(self,*args,**kwargs):
+        self.copper.writeOut(*args,**kwargs)
         if self.solderMask:
-            self.solderMask.writeOut()
-        if self.silkscreen:
-            self.silkscreen.writeOut()
+            self.solderMask.writeOut(*args,**kwargs)
+        if self._silkscreen:
+            self._silkscreen.writeOut(*args,**kwargs)
         
     def minimumViaPad(self,finishedHoleDiameter=None):
         return self.stack.classification.minimumViaPad(finishedHoleDiameter,self.isInner)
@@ -111,7 +127,11 @@ class Stack(list):
     @property
     def numberOfFaces(self):
         return len(self)
-    def __init__(self,numberOfFaces):
+    def __init__(self,numberOfFaces,title='Untitled',author='Author',notes=''):
+        self.title = title
+        self.author = author
+        self.creationMoment = datetime.datetime.now()
+        self.notes = notes
         list.__init__(self,[None]*numberOfFaces)
         ## file initialisation
         self._platedFile = Excellon('Drill Plated',plated=True)
@@ -150,27 +170,55 @@ class Stack(list):
     @property
     def thickness(self):
         return self[0].thickness + self[-1].depth
+    @property
+    def rectangularHull(self):
+        return self.boardOutline.rectangularHull()
     @property 
     def width(self):
-        return self.boardOutline.rectangularHull().width
+        return self.rectangularHull.width
     @property 
     def height(self):
-        return self.boardOutline.rectangularHull().height    
+        return self.rectangularHull.height
+    @property
+    def timeStamp(self):
+        return self.creationMoment.strftime('%Y-%m-%d %H:%M')
         
-    def writeOut(self):
-        def addAperture(gerberFile):
-            apertureNumber = gerberFile.addCircularAperture(self.mechanicalApertureDiameter)
-            self.boardOutline.draw(gerberFile[0],apertureNumber)
+    def writeOut(self,toZip=False):
+        if toZip:
+            zipFile = zipfile.ZipFile('../'+self.title+'.zip','w',zipfile.ZIP_DEFLATED)
+            outputFile = zipFile.filename
+        else:
+            outputFile = '../output/'
+            zipFile = None
             
-        addAperture(self.mechanical)
-        self.mechanical.writeOut()   
+        def addApertureAndShapesTo(gerberFile):
+            apertureNumber = gerberFile.addCircularAperture(self.mechanicalApertureDiameter)
+            for shape in self.boardOutline:
+                shape.outline().draw(gerberFile[0],apertureNumber)
+            
+        addApertureAndShapesTo(self.mechanical)
+        StrokeText(textString='{title} {timeStamp}\n{notes}'.format(title=self.title,timeStamp=self.timeStamp,notes=self.notes),
+                   startArrow=Arrow(self.rectangularHull.bottomLeft,E).outsetArrow(2.5),
+                   gerberLayer=self.mechanical[0]).draw() 
+        self.mechanical.writeOut(zipFile=zipFile)   
+
+        layerMarkers = []
+        for shape in self.boardOutline:
+            layerMarkers += [LayerMarker(Arrow(shape.bottomLeft,E), 4)]
 
         for face in self:
-            addAperture(face.copper)
-            face.writeOut()
+            addApertureAndShapesTo(face.copper)
+            for layerMarker in layerMarkers:
+                layerMarker.draw(face.copper)
+            face.writeOut(zipFile=zipFile)
         
    
-        self._drillFile.writeOut()
+        self._drillFile.writeOut(zipFile=zipFile)
+        
+        if zipFile:
+            zipFile.close()
+            
+        print 'Written out {width:.2f} x {height:.2f} mm to {outputFile}'.format(width=self.width,height=self.height,outputFile = os.path.abspath(outputFile))
         
 if __name__ == '__main__':
     stack = Stack(4)

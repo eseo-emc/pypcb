@@ -71,18 +71,21 @@ FMAT,2
         string += 'M30\n'
         return string
         
-    def writeOut(self,name=None):
+    def writeOut(self,name=None,zipFile=None):
         if name == None:
             name = self.name
         
-        outputDirectory = os.path.abspath('../output')
-        if not os.path.exists(outputDirectory):
-            print 'Creating output directory ' + outputDirectory
-            os.makedirs(outputDirectory)
-        self.fileHandle = open(outputDirectory + '/' + name + '.drl','w')
-            
-        self.fileHandle.write(str(self))
-        self.fileHandle.close()
+        if zipFile:
+            zipFile.writestr(name + '.drl',str(self))
+        else:
+            outputDirectory = os.path.abspath('../output')
+            if not os.path.exists(outputDirectory):
+                print 'Creating output directory ' + outputDirectory
+                os.makedirs(outputDirectory)
+            self.fileHandle = open(outputDirectory + '/' + name + '.drl','w')
+                
+            self.fileHandle.write(str(self))
+            self.fileHandle.close()
         
 if __name__ == '__main__':
     file = Excellon('testDrillFile',plated=True)

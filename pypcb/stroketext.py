@@ -18,29 +18,34 @@ class LayerMarker(object):
         Rectangle(self.startArrow,width,height,gerberLayer=gerberFile[1]).draw()
         
         textStart = self.startArrow.alongArrow(self.sideMargins).turnedLeft().alongArrow(self.lowerMargin).turnedRight()
-        text = StrokeText(textStart.alongArrow((gerberFile.physicalLayer-1)*2*self.characterHeight),'{0:d}'.format(gerberFile.physicalLayer),gerberFile[2],height=self.characterHeight)
+        text = StrokeText(textStart.alongArrow((gerberFile.physicalLayer-1)*2*self.characterHeight),'{0:d}'.format(gerberFile.physicalLayer),gerberFile[2],lineHeight=self.characterHeight)
         text.draw()
 
 class StrokeText(Drawable):
-    def __init__(self,startArrow,textString,gerberLayer,lineWidth=None,height=1.0,align=-1,mirrored=False):
+    def __init__(self,startArrow,textString,gerberLayer,lineWidth=None,lineHeight=1.0,align=-1,mirrored=False):
         self.startArrow = startArrow
         self.textString = textString
         self.gerberLayer = gerberLayer
         if lineWidth is None:
-            lineWidth = height/6.5
+            lineWidth = lineHeight/6.5
         self.lineWidth = lineWidth
-        self.height = height
+        self.lineHeight = lineHeight
         self.align = align
         self.mirrored = mirrored
     def __str__(self):
         return '{className}({startArrow},"{text}")'.format(className=self.__class__.__name__,startArrow=self.startArrow,text=self.textString)
     def draw(self):
-        strokes = font.stringStrokes(self.textString)
-        strokes = strokes - (self.align+1)*numpy.array([float(len(self.textString))/2.,0])
-        if self.mirrored:
-            strokes = strokes * numpy.array([-1.,1.])
-        strokes = strokes * self.height
-
+        strokes = []
+        for (lineNumber,lineString) in enumerate(self.textString.splitlines()):
+            lineStrokes = font.stringStrokes(lineString)
+            lineStrokes = lineStrokes - (self.align+1)*numpy.array([float(len(lineString))/2.,0])
+            if self.mirrored:
+                lineStrokes *= numpy.array([-1.,1.])
+            lineStrokes *= self.lineHeight
+            lineStrokes -= numpy.array([0.,self.lineHeight*1.5*lineNumber])
+            strokes += [lineStrokes]
+        strokes = numpy.concatenate(strokes,0)
+        
         # TODO : there must be an accelerated numpy solution for this
         rotation = Arrow.rotationMatrix(self.startArrow.angle())
         strokes = numpy.apply_along_axis(lambda coordinates: rotation.dot(coordinates),arr=strokes,axis=1)
@@ -97,7 +102,7 @@ if __name__ == '__main__':
     from rs274x import *
 
     testFile = GerberFile('TextTest',decimalPlaces=4)    
-    text = StrokeText(Arrow(Location(20.,10.),E),'Xest',testFile[0],height=5.0,align=-1)
+    text = StrokeText(Arrow(Location(0,0),E),'Xest\nSjoer',testFile[0],lineHeight=5.0,align=1)
     text.draw()
     
     testFile.writeOut('TextTest')

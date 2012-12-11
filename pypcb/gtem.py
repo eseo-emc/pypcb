@@ -3,11 +3,10 @@ from geometry import *
 from stroketext import *
 from copy import deepcopy
 
-lightSpeed = 2.99792458e8*1e3 #mm/s
+lightSpeed = m(2.99792458e8) #mm/s
 
 class GtemCard():
     def __init__(self,pcbSize=105.,cellOpeningWidth=93.5,wallThickness=2.0,frequencyLimit = 18e9,noGroundFraction=0.3):
-        ## board outline creation
         self.pcbSize = pcbSize
         self.bottomWidth = cellOpeningWidth - wallThickness #45 degree taper
         self.frequencyLimit = frequencyLimit
@@ -17,12 +16,11 @@ class GtemCard():
         return Location(self.pcbSize/2,self.pcbSize/2)
      
     def stitchingPitch(self):
-        waveLength = 2e8/self.frequencyLimit
-        return m(waveLength/10)
+        waveLength = 0.66*lightSpeed/self.frequencyLimit
+        return waveLength/10
            
     def draw(self,stack):
         self.groundPlane = Rectangle(Arrow(Location(0.,0.),E),self.pcbSize,self.pcbSize)
-        self.layerMarker = LayerMarker(Arrow(Location(0.,0.),E), 4)
         
         for face in stack:
             Rectangle(rectangle=self.groundPlane,gerberLayer=face.copper[0]).draw()
@@ -45,7 +43,7 @@ class GtemCard():
         stitchingPitch = max(self.stitchingPitch(),stack.classification.viaStitchingPitch(stack.classification.minimumFinishedHoleDiameter))
         
         def viaStamp(arrowAlongBorder):
-            MinimumVia(arrowAlongBorder.turnedRight(),stack=stack).draw()     
+            MinimumVia(arrowAlongBorder.turnedRight(),stack=stack,inner=True).draw()     
         extraGroundPlane.outline().lines()[0].reversed().stamp(stitchingPitch,viaStamp,center=True)
         groundVoidRectangle(self.center(),self.bottomWidth,bottomCornerHeight).lines().stamp(stitchingPitch,viaStamp)
         
@@ -60,8 +58,8 @@ class GtemCard():
         for coordinate in holeCoordinates.tolist():
             stack.addHole(Hole(Location(numpy.array(coordinate)),3.5,plated=False))
             
-        for file in [stack.top,stack.innerOneFile,stack.innerTwoFile,stack.bottom]:
-            self.layerMarker.draw(file)
+        Legend(Arrow(self.center()+PlaneVector(holeRadius,0),E),stack).draw()
+            
 
 class ESensor:
     def __init__(self,startArrow,face,diameter=3.):
@@ -69,8 +67,6 @@ class ESensor:
         self.diameter = diameter
         self.face = face
     def draw(self):
-#        Circle(center=self.startArrow.origin,diameter=self.diameter).draw(self.face.copper[10])
-#        Via(self.startArrow.origin,self.face.stack.classification.minimumFinishedHoleDiameter).draw(self.face.stack)
         connector = MolexSma(self.startArrow,signalFaceDiameterTuples=[(self.face,self.diameter)],face=self.face.opposite)
         connector.draw()
         
@@ -119,6 +115,7 @@ class Via(DrawGroup):
         self.largestPadDiameter = 0.
                 
         for (face,padDiameter) in self.padFaceDiameterTuples:
+            padDiameter = max(padDiameter,face.minimumViaPad())
             self.append(Circle(self.location,padDiameter,face.copper[20]))
             if face in self.isolateFaces:
                 self.append(Circle(self.location,self.stack.classification.minimumViaClearPad(padDiameter),face.copper[11]))
@@ -143,10 +140,10 @@ class Via(DrawGroup):
 
             
 class MinimumVia(Via):
-    def __init__(self,startArrow=None,location=None,finishedHoleDiameter=None,stack=None,*args,**kwargs):
+    def __init__(self,startArrow=None,location=None,finishedHoleDiameter=None,stack=None,inner=False,*args,**kwargs):
         if not finishedHoleDiameter:
             finishedHoleDiameter = stack.classification.minimumFinishedHoleDiameter
-        padDiameter = stack.classification.viaClearance(finishedHoleDiameter,inner=False)
+        padDiameter = stack.classification.viaClearance(finishedHoleDiameter,inner=inner)
         if type(location) == type(None):
             location = startArrow.along(padDiameter)
                 
@@ -155,9 +152,9 @@ class MinimumVia(Via):
 class MolexSma:
     '''http://www.molex.com/pdm_docs/sd/732511850_sd.pdf'''
     mountingHoleClearance = 3.58
-    mountingHoleDiameter = 1.6
+    mountingHoleDiameter = 2.2#1.6
 
-    groundPadDiameter = 4.32 + 0.5
+    groundPadDiameter = 4.32 #+ 0.5
     groundGapDiameter = 2.57
     signalPadDiameter = 0.76
 
@@ -193,7 +190,7 @@ class MolexSma:
                 viaAngles = numpy.linspace(self.groundStartAngle,self.groundStartAngle+2.*numpy.pi,self.groundVias,endpoint=False)
             
             for viaAngle in viaAngles:
-                MinimumVia(self.startArrow.rotated(viaAngle).alongArrow(self.groundGapDiameter/2.),skipFaces=[self.face]+self.groundFaces,stack=stack).draw()
+                MinimumVia(self.startArrow.rotated(viaAngle).alongArrow(self.groundGapDiameter/2.),inner=True,skipFaces=[self.face]+self.groundFaces,stack=stack).draw()
 
         # Mounting holes
         stack.addHole(Hole(self.startArrow.right(self.mountingHoleClearance),self.mountingHoleDiameter,plated=False))
@@ -240,22 +237,26 @@ class RingResonator(DrawGroup):
     '''
     J. Vorlicek, J. Rusz, L. Oppl, and J. Vrba. Complex permittivity measurement of substrates using ring resonator. In Technical Computing Bratislava, 2010.
     http://phobos.vscht.cz/konference_matlab/MATLAB10/full_text/107_Vorlicek.pdf
+    C.-C. Yu and K. Chang. Transmission-line analysis of a capacitively coupled microstrip-ring resonator. Microwave Theory and Techniques, IEEE Transactions on, 45(11):2018 –2024, nov 1997.
+    http://ieeexplore.ieee.org/xpl/articleDetails.jsp?tp=&arnumber=644224
     '''
+    gapToTraceWidthRatio = 0.5
 
-    connectorClass = MolexSmdSma
-    
-    def __init__(self,face,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startArrow=Arrow(Location(0,0),E)):
+    def __init__(self,face,traceWidth,firstResonanceFrequency,effectiveRelativePermittivity,startArrow=Arrow(Location(0,0),E),startLayer=10):
         self.startArrow = deepcopy(startArrow)
         self.face = face
         self.firstResonanceFrequency = firstResonanceFrequency
         self.traceWidth = traceWidth
         self.effectiveRelativePermittivity = effectiveRelativePermittivity
-        
+
         DrawGroup.__init__(self,
-           [Circle(self.startArrow.origin,self.outerDiameter(),self.face.copper[10]),
-            Circle(self.startArrow.origin,self.innerDiameter(),self.face.copper[11]),
-            Circle(self.startArrow.origin,self.outerDiameter()+2.*self.traceWidth,self.face.solderMask[10]),
-            StrokeText(self.startArrow,'°{innerDiameter:.2f}mm'.format(innerDiameter=self.innerDiameter()),self.face.silkscreen[0],align=0) ])
+           [Circle(self.startArrow.origin,self.outerDiameter(),self.face.copper[startLayer]),
+            Circle(self.startArrow.origin,self.innerDiameter(),self.face.copper[startLayer+1]) ])
+        if self.face.solderMask:
+            self.append(Circle(self.startArrow.origin,self.outerDiameter()+2.*self.traceWidth,self.face.solderMask[10]))
+
+        self.label = StrokeText(self.startArrow,'°{innerDiameter:.2f}mm\nw={traceWidth:.2f}mm\ng={gapWidth:.2f}mm'.format(innerDiameter=self.innerDiameter(),traceWidth=self.traceWidth,gapWidth=self._gapWidth),self.face.silkscreen[0],align=0)
+        self.append(self.label)
 
     def innerDiameter(self):
         velocity = lightSpeed/numpy.sqrt(self.effectiveRelativePermittivity)
@@ -263,14 +264,31 @@ class RingResonator(DrawGroup):
         return waveLength # http://www.microwaves101.com/encyclopedia/mitered_bends.cfm
     def outerDiameter(self):
         return self.innerDiameter() + 2.*self.traceWidth 
+    @property
+    def _gapWidth(self):
+        return self.traceWidth * self.gapToTraceWidthRatio
     def endArrows(self):
-        gapWidth = self.face.stack.classification.minimumPadToPad      
-        outset = self.outerDiameter()/2.+gapWidth*2.
+        outset = self.outerDiameter()/2.+self._gapWidth
         
         return [self.startArrow.alongArrow(outset),
                 self.startArrow.turnedRight().alongArrow(outset)]
         
-    
+class Legend(DrawGroup):
+    def __init__(self,startArrow,stack):
+        permittivitiesString = ''
+        for (key,value) in stack.classification.permittivity.iteritems():
+            permittivitiesString += '@ {frequency} GHz{epsilon:7.2f}\n'.format(frequency=key/1e9,epsilon=value)
+        legendString = '''{title}
+{timeStamp}
+{author}
+
+eurocircuits STD-4L
+Cu+Au  35 um
+prepreg 7628 362 um
+er {permittivitiesString}
+Made with PyPCB'''.format(title=stack.title,timeStamp=stack.timeStamp,author=stack.author,permittivitiesString=permittivitiesString)
+        self.append(StrokeText(startArrow=startArrow,textString=legendString,
+                               align=1,gerberLayer=stack[0].silkscreen[0]))
 
 def groundVoidRectangle(centerLocation,width,cornerHeight,outset=0.):
     radius = width/2
@@ -295,5 +313,6 @@ if __name__ == '__main__':
 #    GtemCard().draw(Stack(4))
     stack = Stack(4)
     connector = MolexSmdSma(Arrow(Location(0,0),E),stack[0],True)
+    print stack[0].maximumFinishedHoleDiameter(0.6)
 
         
