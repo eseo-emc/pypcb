@@ -142,13 +142,45 @@ class ResonatorCard(DrawGroup):
         self.append(resonator(traceWidth,2e9,effectiveRelativePermittivity,startLayer=10))
         self.append(resonator(traceWidth,9e9,effectiveRelativePermittivity,startLayer=14))
         self.append(Legend(Arrow(self.topRight-PlaneVector(5.,5.),E),stack))
+   
+class SubstrateSample(DrawGroup):
+    bandWaveguideSizes = {'L':(165.1,82.55), 'S':(72.14,34.04),'C':(47.55,22.149),'X':(22.86,10.16)}
+    
+    def __init__(self,bandLetter,eFieldVertical=True):
+        (width,height) = self.bandWaveguideSizes[bandLetter]
+        textMargin = 0.8
+        emptySubstrateText = ('EMPTY SUBSTRATE ' if bandLetter != 'X' else 'EMTY ')
+        noCopperText = ('mm NO COPPER ' if bandLetter != 'X' else '')
+        leftLabel = StrokeText(None,'{letter} {emptySubstrateText}{orientation}'.format(letter=bandLetter,orientation=('Ey' if eFieldVertical else 'Ex'),emptySubstrateText=emptySubstrateText),gerberLayer=stack[0].silkscreen[0])
+        rightLabel = StrokeText(None,'{width:.1f}x{height:.1f}{noCopperText}'.format(width=width,height=height,noCopperText=noCopperText),gerberLayer=stack[0].silkscreen[0])
+        
+        
+        oversize = 2.*stack.classification.millingTolerance
+        if not eFieldVertical:
+            (width,height) = (height,width)
+        rectangle = Rectangle(Arrow(Location(0,0),E),width=width+oversize,height=height+oversize)
+        if eFieldVertical:
+            leftLabel.startArrow = Arrow(rectangle.topLeft,S)
+            rightLabel.startArrow = Arrow(rectangle.bottomRight,N)
+        else:
+            leftLabel.startArrow = Arrow(rectangle.bottomLeft,E)
+            rightLabel.startArrow = Arrow(rectangle.topRight,W)
+        leftLabel.startArrow = leftLabel.startArrow.alongArrow(textMargin).outsetArrow(-textMargin)
+        rightLabel.startArrow = rightLabel.startArrow.alongArrow(textMargin).outsetArrow(-textMargin)
+            
+        self.append(Rectangle(rectangle=rectangle,gerberLayer=stack[0].solderMask[0]))
+        self.append(Rectangle(rectangle=rectangle,gerberLayer=stack[-1].solderMask[0]))
+                
+        self.append(leftLabel)
+        self.append(rightLabel)
+        
         
 
 # Card
 outerTraceWidth = 0.67 # 0.67 # 50 ohm microstrip on h=360um, er=4.1, t=25um, f=10GHz, according to http://www1.sphere.ne.jp/i-lab/ilab/tool/ms_line_e.htm
 innerTraceWidth = 0.468 # 50 ohm microstrip according to ATLC2 refined with CST
 effectiveRelativePermittivity = 3.25 # 50 ohm microstrip on h=360um, er=4.1, t=25um, f=10GHz, according to ADS LineCalc
-longLength = 30.
+longLength = 50.
 
 stack = Stack(numberOfFaces=4,title='GTEM field-to-line demo',author='Sjoerd OP \'T LAND\nGroupe ESEO, France')
 stack[-1].silkscreen.export = False # cheaper
@@ -160,6 +192,7 @@ innerResonator = ResonatorCard(innerTraceWidth,InnerResonator)
 
 card = GtemCard(frequencyLimit=20e9)
 #card.pcbSize = outerResonator.width
+bottomCenterArrow = Arrow(card.center()+Vector([0,-32]),E)
 card.draw(stack)
 
 
@@ -167,25 +200,49 @@ card.draw(stack)
 soicAndTrace = SoicAndTrace(Arrow(card.center()+Location(0.5*longLength,30.),E))
 soicAndTrace.draw()
 
-snakeTrace = SnakeTrace(soicAndTrace.endArrow.reversed().outsetArrow(25.),stack[-1])
+snakeTrace = SnakeTrace(Arrow(card.center()+Location(-0.5*longLength,0.),E),stack[-1])
 snakeTrace.draw()
-StraightTrace(longLength,outerTraceWidth,snakeTrace.startArrow.outsetArrow(15.),stack[-1]).draw()
+#StraightTrace(longLength,outerTraceWidth,snakeTrace.startArrow.outsetArrow(10.),stack[-1]).draw()
+StraightTrace(longLength,outerTraceWidth,bottomCenterArrow.alongArrow(-longLength+15.).outsetArrow(-20.),stack[-1]).draw()
 
 # Sensors
-bottomCenterArrow = Arrow(card.center()+Vector([0,-32]),E)
-ESensor(bottomCenterArrow.alongArrow(+15),stack[-1]).draw()
-HSensor(bottomCenterArrow.alongArrow(+30),stack[-1]).draw()
-StraightTrace(longLength,innerTraceWidth,bottomCenterArrow.alongArrow(-longLength),stack[1]).draw()
+ESensor(bottomCenterArrow.alongArrow(+25),stack[-1]).draw()
+HSensor(bottomCenterArrow.alongArrow(+35),stack[-1]).draw()
+StraightTrace(longLength,innerTraceWidth,bottomCenterArrow.alongArrow(-longLength+15.),stack[1]).draw()
 
-
-
+# Resonators
 outerResonator.bottomLeft = card.groundPlane.bottomRight + PlaneVector(stack.classification.breakRoutingGap,0)
 innerResonator.bottomLeft = outerResonator.bottomRight + PlaneVector(stack.classification.breakRoutingGap,0)
+
+# Substrate samples
+sampleSHorizontal = SubstrateSample('S',eFieldVertical=True)
+sampleCVertical = SubstrateSample('C',eFieldVertical=False)
+sampleCHorizontal = SubstrateSample('C',eFieldVertical=True)
+sampleXVertical = SubstrateSample('X',eFieldVertical=False)
+sampleXHorizontal = SubstrateSample('X',eFieldVertical=True)
+
+sampleSHorizontal.topLeft = card.groundPlane.bottomLeft + PlaneVector(0,-stack.classification.breakRoutingGap)
+sampleCVertical.topLeft = sampleSHorizontal.topRight + PlaneVector(stack.classification.breakRoutingGap,0)
+sampleCHorizontal.topLeft = sampleCVertical.topRight + PlaneVector(stack.classification.breakRoutingGap,0)
+sampleXVertical.topLeft = sampleCHorizontal.bottomLeft + PlaneVector(0,-stack.classification.breakRoutingGap)
+sampleXHorizontal.topLeft = sampleXVertical.topRight + PlaneVector(stack.classification.breakRoutingGap,0)
+
+sampleSHorizontal.draw()
+sampleCVertical.draw()
+sampleCHorizontal.draw()
+sampleXVertical.draw()
+sampleXHorizontal.draw()
 
 
 stack.boardOutline = DrawGroup([card.groundPlane,
                       innerResonator.rectangularHull(),
-                      outerResonator.rectangularHull()])
+                      outerResonator.rectangularHull(),
+                      sampleSHorizontal.rectangularHull(),
+                      sampleCVertical.rectangularHull(),
+                      sampleCHorizontal.rectangularHull(),
+                      sampleXVertical.rectangularHull(),
+                      sampleXHorizontal.rectangularHull()])
+stack.skipLayerMarkerOutlineNumbers = [3,4,5,6,7]
 #stack.boardOutline = card.groundPlane.outline()
                                    
 

@@ -10,8 +10,10 @@ class Classification:
     pass
 class EuroCircuits(Classification):
     solderMaskMisalignment = 0.1
+    millingTolerance = 0.2
     permittivity = {1e9: 4.10, 2e9: 4.08} #Technolam_data_sheets_NP-115.pdf
     breakRoutingGap = 2.0
+    panelBorder = 7.0
     drillIncrement = 0.05
     
     def productionHoleDiameter(self,finishedHoleDiameter):
@@ -131,6 +133,7 @@ class Stack(list):
         self.title = title
         self.author = author
         self.creationMoment = datetime.datetime.now()
+        self.skipLayerMarkerOutlineNumbers = []
         self.notes = notes
         list.__init__(self,[None]*numberOfFaces)
         ## file initialisation
@@ -190,21 +193,26 @@ class Stack(list):
         else:
             outputFile = '../output/'
             zipFile = None
-            
+
+        layerMarkers = []
+        for (shapeNumber,shape) in enumerate(self.boardOutline):
+            if shapeNumber not in self.skipLayerMarkerOutlineNumbers:
+                layerMarkers += [LayerMarker(Arrow(shape.bottomLeft,E), 4)]
+
+        
+        if len(self.boardOutline) > 1:
+            self.boardOutline += [self.rectangularHull.outset(self.classification.panelBorder)]
         def addApertureAndShapesTo(gerberFile):
             apertureNumber = gerberFile.addCircularAperture(self.mechanicalApertureDiameter)
             for shape in self.boardOutline:
-                shape.outline().draw(gerberFile[0],apertureNumber)
+                shape.outline().draw(gerberFile[30],apertureNumber)
             
         addApertureAndShapesTo(self.mechanical)
-        StrokeText(textString='{title} {timeStamp}\n{notes}'.format(title=self.title,timeStamp=self.timeStamp,notes=self.notes),
-                   startArrow=Arrow(self.rectangularHull.bottomLeft,E).outsetArrow(2.5),
-                   gerberLayer=self.mechanical[0]).draw() 
+#        StrokeText(textString='{title} {timeStamp}\n{notes}'.format(title=self.title,timeStamp=self.timeStamp,notes=self.notes),
+#                   startArrow=Arrow(self.rectangularHull.bottomLeft,E).outsetArrow(2.5),
+#                   gerberLayer=self.mechanical[0]).draw() 
         self.mechanical.writeOut(zipFile=zipFile)   
 
-        layerMarkers = []
-        for shape in self.boardOutline:
-            layerMarkers += [LayerMarker(Arrow(shape.bottomLeft,E), 4)]
 
         for face in self:
             addApertureAndShapesTo(face.copper)

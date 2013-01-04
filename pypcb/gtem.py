@@ -6,7 +6,7 @@ from copy import deepcopy
 lightSpeed = m(2.99792458e8) #mm/s
 
 class GtemCard():
-    def __init__(self,pcbSize=105.,cellOpeningWidth=93.5,wallThickness=2.0,frequencyLimit = 18e9,noGroundFraction=0.3):
+    def __init__(self,pcbSize=105.,cellOpeningWidth=93.5,wallThickness=2.0,frequencyLimit = 18e9,noGroundFraction=0.26):
         self.pcbSize = pcbSize
         self.bottomWidth = cellOpeningWidth - wallThickness #45 degree taper
         self.frequencyLimit = frequencyLimit
@@ -157,6 +157,9 @@ class MolexSma:
     groundPadDiameter = 4.32 #+ 0.5
     groundGapDiameter = 2.57
     signalPadDiameter = 0.76
+    
+    keepOutWidth = 5.66
+    keepOutHeight = 15.88
 
 
     def __init__(self,startArrow,face,signalFaceDiameterTuples=[],groundFaces=[],groundStartAngle=0.,groundStopAngle=None,groundVias=10):
@@ -195,6 +198,9 @@ class MolexSma:
         # Mounting holes
         stack.addHole(Hole(self.startArrow.right(self.mountingHoleClearance),self.mountingHoleDiameter,plated=False))
         stack.addHole(Hole(self.startArrow.left(self.mountingHoleClearance),self.mountingHoleDiameter,plated=False))
+        
+        # Placement outline
+        Rectangle(self.startArrow.alongArrow(-self.keepOutWidth/2).outsetArrow(self.keepOutHeight/2),self.keepOutWidth,self.keepOutHeight,stack[0].silkscreen[0],0).draw()
 
 class MolexSmdSma(DrawGroup):
     padSpacing = 4.75
